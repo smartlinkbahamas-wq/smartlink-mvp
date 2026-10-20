@@ -5,6 +5,7 @@ import type {
   ExpertApplicationStatusView,
   MissingFeedbackReason,
   ResultsFeedbackAnswer,
+  ServiceCategory,
 } from "@/types";
 
 const DEFAULT_API_BASE = "http://localhost:5000/api";
@@ -225,7 +226,7 @@ export async function createIntroductionRequestsInBackend(params: {
   return postJson<{
     success: boolean;
     data: { reviewTokens: Array<{ expertId: string; reviewToken: string; expiresAt: string }> };
-  }>("/introductions", {
+  }>("/introduction-requests", {
     assessmentId,
     leadName,
     leadEmail,
@@ -334,3 +335,27 @@ export async function updateExpertProfile(payload: Record<string, any>, token: s
   );
 }
 
+
+// Categories are managed in Settings -> Categories and read here without a
+// session: the quiz and the expert application are both public pages.
+export async function getServiceCategories(): Promise<ServiceCategory[]> {
+  const response = await fetch(`${getApiBaseUrl()}/categories`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error("Failed to load categories.");
+  }
+  const parsed = (await response.json()) as { success: boolean; data: ServiceCategory[] };
+  return parsed.data || [];
+}
+
+export async function getSpecializationOptions(): Promise<string[]> {
+  const response = await fetch(`${getApiBaseUrl()}/categories/specializations`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error("Failed to load specializations.");
+  }
+  const parsed = (await response.json()) as { success: boolean; data: string[] };
+  return parsed.data || [];
+}

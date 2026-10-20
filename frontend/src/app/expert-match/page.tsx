@@ -758,8 +758,10 @@ export default function ExpertMatchPage() {
             expertTier: request.expertTier,
           })),
         });
-      } catch {
-        // Keep UX non-blocking if backend call fails.
+      } catch (err) {
+        // Kept non-blocking by design, but never silent: a swallowed failure
+        // here means the expert is never told, while the client sees "sent".
+        console.error("Backend introduction creation failed:", err);
       }
     }
   };

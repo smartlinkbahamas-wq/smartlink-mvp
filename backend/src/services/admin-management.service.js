@@ -1,6 +1,6 @@
 const { AppError } = require("../utils/app-error");
 const { requireSupabase } = require("../utils/supabase-guard");
-const { appendAdminAuditLog, listAuditLogs } = require("./admin-audit.service");
+const { appendAdminAuditLog, listAuditLogs, listExpertActivity } = require("./admin-audit.service");
 const { isHighValueLead } = require("./admin-rbac.service");
 const { normalizeEmail, passwordPolicyCheck, throwWeakPassword } = require("../utils/security");
 const { savePasswordHistory, deleteOldPasswordHistory } = require("./auth.service");
@@ -1657,6 +1657,7 @@ module.exports = {
   flagReviewSuspicious,
   getAdminReportsSummary,
   listAuditLogs,
+  listExpertActivity,
   searchAdminUsers,
   searchExperts,
   searchLeads,

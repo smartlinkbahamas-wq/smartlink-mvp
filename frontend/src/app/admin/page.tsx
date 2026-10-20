@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, react-hooks/exhaustive-deps */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   LogOut,
   ScrollText,
+  FolderTree,
   ShieldCheck,
   SlidersHorizontal,
   UserCog,
@@ -25,6 +26,11 @@ import {
   getAdminMe,
   getAdminRoles,
   getAuditLogs,
+  getExpertActivity,
+  getAdminCategories,
+  createAdminCategory,
+  updateAdminCategory,
+  deleteAdminCategory,
   getExpertPerformance,
   getExpertApplications,
   getFairnessSettings,
@@ -58,6 +64,7 @@ import {
 import { clearAdminSession, getAdminAccessToken, logoutCurrentSession } from "@/lib/admin-session";
 import { canAccessAdminArea } from "@/lib/role-guard";
 import type {
+  ServiceCategory,
   AdminAuditLogRecord,
   AdminFairnessSettings,
   AdminMatchOverrideRecord,
@@ -85,6 +92,14 @@ function can(me: AdminMe | null, permission: string) {
 function roleLabel(role?: string | null) {
   if (!role) return "Unknown role";
   return role.replace("_", " ").replace(/\b\w/g, (s) => s.toUpperCase());
+}
+
+function fieldLabel(key: string) {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim()
+    .replace(/\b\w/g, (s) => s.toUpperCase());
 }
 
 function statusChipClass(status: string) {
@@ -147,10 +162,21 @@ function mapAuditAction(action: string) {
   return map[action] || action.replaceAll("_", " ");
 }
 
-type TabKey = "overview" | "experts" | "leads" | "team" | "settings" | "activity";
+type TabKey = "overview" | "experts" | "leads" | "team" | "categories" | "settings" | "activity";
 type ExpertsSubTabKey = "directory" | "applications" | "reviews" | "performance";
 type LeadsSubTabKey = "assignment" | "escalation" | "overrides";
 type SettingsSubTabKey = "matching" | "pricing" | "fairness";
+const SEGMENT_OPTIONS = [
+  { value: "business-owner", label: "Business owners" },
+  { value: "personal-help", label: "Personal help" },
+  { value: "not-sure", label: "Not sure yet" },
+];
+
+const SEGMENT_LABELS: Record<string, string> = SEGMENT_OPTIONS.reduce(
+  (acc, option) => ({ ...acc, [option.value]: option.label }),
+  {} as Record<string, string>,
+);
+
 const ROLE_OPTIONS: AdminRole[] = ["super_admin", "admin", "moderator", "auditor"];
 const FAIRNESS_MAX_BY_STRENGTH = {
   low: 10,
@@ -203,6 +229,18 @@ export default function AdminPage() {
   const [selectedLead, setSelectedLead] = useState<AdminLeadOption | null>(null);
   const [expertQuery, setExpertQuery] = useState("");
   const [selectedExpert, setSelectedExpert] = useState<AdminExpertOption | null>(null);
+  const [categories, setCategories] = useState<ServiceCategory[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [categoryForm, setCategoryForm] = useState({
+    label: "",
+    parentId: "",
+    segments: [] as string[],
+    supportText: "",
+    riskPoints: 4,
+  });
+  const [expertActivity, setExpertActivity] = useState<AdminAuditLogRecord[]>([]);
+  const [expertActivityLoading, setExpertActivityLoading] = useState(false);
+  const [expertActivityError, setExpertActivityError] = useState("");
   const [assignmentReason, setAssignmentReason] = useState("");
   const [quickBoostPoints, setQuickBoostPoints] = useState<0 | 5 | 10 | 15>(5);
   const [overrideLead, setOverrideLead] = useState<AdminLeadOption | null>(null);
@@ -248,6 +286,13 @@ export default function AdminPage() {
         helper: "Control pricing and match strategy.",
         icon: SlidersHorizontal,
         enabled: can(me, "settings.pricing.manage") || can(me, "settings.matching.manage") || can(me, "settings.fairness.manage"),
+      },
+      {
+        key: "categories" as const,
+        label: "Categories",
+        helper: "Add the categories clients choose from.",
+        icon: FolderTree,
+        enabled: can(me, "settings.category.manage"),
       },
       { key: "activity" as const, label: "Activity", helper: "See important actions and security events.", icon: ScrollText, enabled: can(me, "audit.view") },
     ],
@@ -493,6 +538,54 @@ export default function AdminPage() {
     }
   }, [expertOptions, selectedExpert]);
 
+  useEffect(() => {
+    if (!token || !selectedExpert || !can(me, "audit.view")) {
+      setExpertActivity([]);
+      setExpertActivityError("");
+      return;
+    }
+
+    let active = true;
+    setExpertActivityLoading(true);
+    setExpertActivityError("");
+
+    getExpertActivity(token, selectedExpert.id)
+      .then((logs) => {
+        if (active) setExpertActivity(logs);
+      })
+      .catch((loadError) => {
+        if (!active) return;
+        setExpertActivity([]);
+        setExpertActivityError(
+          loadError instanceof Error ? loadError.message : "Failed to load activity for this expert.",
+        );
+      })
+      .finally(() => {
+        if (active) setExpertActivityLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [token, selectedExpert, me]);
+
+  const refreshCategories = useCallback(async () => {
+    if (!token) return;
+    setCategoriesLoading(true);
+    try {
+      setCategories(await getAdminCategories(token));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load categories.");
+    } finally {
+      setCategoriesLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!token || !can(me, "settings.category.manage")) return;
+    void refreshCategories();
+  }, [token, me, refreshCategories]);
+
   const runAction = async (action: () => Promise<unknown>, successMessage: string) => {
     try {
       setError("");
@@ -699,7 +792,7 @@ export default function AdminPage() {
           <div className="space-y-4">
             <section className="rounded-[20px] border border-[#DCE7F6] bg-white p-4 shadow-[0_10px_24px_rgba(36,57,92,0.06)]">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#2E67E8]">
+                <p className="text-sm font-semibold text-[#2E67E8]">
                   {tabs.find((item) => item.key === activeTab)?.label || "Workspace"}
                 </p>
                 <p className="rounded-full bg-[#EDF3FF] px-3 py-1 text-xs font-medium text-[#2759C9]">
@@ -716,13 +809,13 @@ export default function AdminPage() {
                 <article className="overflow-hidden rounded-[22px] border border-[#DCE7F6] bg-gradient-to-r from-[#0F1F3A] via-[#1E3A70] to-[#2E67E8] p-5 text-white shadow-[0_15px_36px_rgba(19,39,75,0.25)]">
                   <div className="flex flex-wrap items-end justify-between gap-4">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/80">Dashboard Snapshot</p>
+                      <p className="text-sm font-semibold text-white/80">Dashboard Snapshot</p>
                       <h2 className="mt-2 text-2xl font-semibold">Marketplace Health Overview</h2>
                       <p className="mt-2 text-sm text-white/85">Live operational signal from leads, experts, quality, and escalations.</p>
                       <p className="mt-3 text-xs text-white/75">{overviewDateLabel}</p>
                     </div>
                     <div className="rounded-2xl bg-white/10 px-4 py-3 backdrop-blur">
-                      <p className="text-xs uppercase tracking-[0.12em] text-white/80">Top Demand</p>
+                      <p className="text-xs font-medium text-white/80">Top Demand</p>
                       <p className="mt-1 text-xl font-semibold">{topLeadCategory?.category || "No category yet"}</p>
                       <p className="text-sm text-white/85">{topLeadCategory ? `${topLeadCategory.count} active leads` : "Waiting for data"}</p>
                     </div>
@@ -768,7 +861,7 @@ export default function AdminPage() {
                     },
                   ].map((item) => (
                     <article key={item.label} className="rounded-[20px] border border-[#DCE7F6] bg-white p-4 shadow-[0_8px_20px_rgba(36,57,92,0.08)]">
-                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7283A0]">{item.label}</p>
+                      <p className="text-sm font-medium text-[#7283A0]">{item.label}</p>
                       <p className="mt-2 text-3xl font-semibold text-[#152540]">{item.value}</p>
                       <p className="mt-1 text-xs text-[#5F708C]">{item.helper}</p>
                       <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-[#EAF0FC]">
@@ -959,7 +1052,7 @@ export default function AdminPage() {
                     </div>
 
                     <div className="mt-4 rounded-xl border border-[#E6ECF8] bg-[#FBFDFF] p-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7283A0]">Escalation Snapshot</p>
+                      <p className="text-sm font-medium text-[#7283A0]">Escalation Snapshot</p>
                       <div className="mt-2 grid gap-2 sm:grid-cols-3">
                         <div className="rounded-lg bg-white px-2.5 py-2 text-center">
                           <p className="text-xs text-[#60728E]">No Match</p>
@@ -1153,6 +1246,52 @@ export default function AdminPage() {
                             <p className="mt-2 text-xs text-amber-700">Only Admin and Super Admin can pause or resume experts.</p>
                           ) : null}
                         </div>
+
+                        {can(me, "audit.view") ? (
+                          <div className="rounded-2xl border border-[#E2EAF8] bg-white p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm font-semibold">Activity</p>
+                              {selectedExpert && expertActivity.length > 0 ? (
+                                <span className="rounded-full bg-[#EEF4FF] px-2.5 py-1 text-xs font-medium text-[#2759C9]">
+                                  {expertActivity.length} {expertActivity.length === 1 ? "entry" : "entries"}
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="mt-1 text-xs text-[#62728C]">
+                              Everything recorded for this expert, including their application and reviews.
+                            </p>
+
+                            {!selectedExpert ? (
+                              <p className="mt-3 text-sm text-[#6A7C98]">Select an expert to see their activity.</p>
+                            ) : expertActivityLoading ? (
+                              <p className="mt-3 text-sm text-[#6A7C98]">Loading activity...</p>
+                            ) : expertActivityError ? (
+                              <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                                {expertActivityError}
+                              </p>
+                            ) : expertActivity.length === 0 ? (
+                              <p className="mt-3 text-sm text-[#6A7C98]">No activity recorded for this expert yet.</p>
+                            ) : (
+                              <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                                {expertActivity.map((entry) => (
+                                  <article key={entry.audit_id} className="rounded-xl border border-[#E1E9F8] bg-[#FCFDFF] p-3">
+                                    <p className="text-sm font-semibold">{mapAuditAction(entry.action_type)}</p>
+                                    <p className="mt-1 text-xs text-[#62728C]">
+                                      {entry.user_email || "System"} &bull; {roleLabel(entry.role)} &bull; {formatDateTime(entry.timestamp)}
+                                    </p>
+                                    {entry.notes ? <p className="mt-1 text-xs text-[#4F617F]">{entry.notes}</p> : null}
+                                    <details className="mt-2">
+                                      <summary className="cursor-pointer text-xs text-[#60728E]">Technical details</summary>
+                                      <p className="mt-1 text-xs text-[#60728E]">Audit ID: {entry.audit_id}</p>
+                                      <p className="text-xs text-[#60728E]">Target: {entry.target_type || "system"}</p>
+                                      <p className="text-xs text-[#60728E]">Target ID: {entry.target_id || "n/a"}</p>
+                                    </details>
+                                  </article>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
 
@@ -1191,7 +1330,7 @@ export default function AdminPage() {
                                         if (typeof value === "boolean") {
                                           return (
                                             <div key={key}>
-                                              <span className="text-[#60728E] block text-xs mb-1 uppercase tracking-wide">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                                              <span className="text-[#60728E] block text-xs font-medium mb-1">{fieldLabel(key)}</span>
                                               <span className="font-medium text-[#111827]">{value ? "Yes" : "No"}</span>
                                             </div>
                                           );
@@ -1200,7 +1339,7 @@ export default function AdminPage() {
                                           const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(value);
                                           return (
                                             <div key={key}>
-                                              <span className="text-[#60728E] block text-xs mb-1 uppercase tracking-wide">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                                              <span className="text-[#60728E] block text-xs font-medium mb-1">{fieldLabel(key)}</span>
                                               {isImage ? (
                                                 <a href={`http://localhost:5000${value}`} target="_blank" rel="noreferrer" className="block mt-2">
                                                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1216,7 +1355,7 @@ export default function AdminPage() {
                                         }
                                         return (
                                           <div key={key} className={value && String(value).length > 60 ? "md:col-span-2" : ""}>
-                                            <span className="text-[#60728E] block text-xs mb-1 uppercase tracking-wide">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                                            <span className="text-[#60728E] block text-xs font-medium mb-1">{fieldLabel(key)}</span>
                                             <span className="font-medium text-[#111827]">{value ? String(value) : "—"}</span>
                                           </div>
                                         );
@@ -1247,7 +1386,7 @@ export default function AdminPage() {
                                         {hasIntro && (
                                           <div className="rounded-lg border border-[#E2EAF8] bg-white p-4 space-y-2">
                                             <div className="flex items-center justify-between">
-                                              <span className="text-xs font-semibold uppercase text-[#5D6B85]">Proposed Introduction Bio</span>
+                                              <span className="text-sm font-semibold text-[#5D6B85]">Proposed Introduction Bio</span>
                                               <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
                                                 intro.status === "approved" ? "bg-emerald-100 text-emerald-800" : intro.status === "rejected" ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"
                                               }`}>
@@ -1278,7 +1417,7 @@ export default function AdminPage() {
 
                                         {hasPackages && (
                                           <div className="space-y-3">
-                                            <span className="text-xs font-semibold uppercase text-[#5D6B85] block">Submitted Service Packages</span>
+                                            <span className="text-sm font-semibold text-[#5D6B85] block">Submitted Service Packages</span>
                                             <div className="grid gap-3 md:grid-cols-2">
                                               {packagesList.map((pkg: any) => (
                                                 <div key={pkg.id} className="rounded-lg border border-[#E2EAF8] bg-white p-4 space-y-2">
@@ -2399,6 +2538,218 @@ export default function AdminPage() {
             ) : activeSettingsTab === "fairness" ? (
               <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">Only Super Admin can change fairness settings.</p>
             ) : null}
+              </section>
+            ) : null}
+
+            {activeTab === "categories" ? (
+              <section className="rounded-[24px] border border-[#DCE7F6] bg-white p-6">
+                {can(me, "settings.category.manage") ? (
+                  <>
+                    <h2 className="text-2xl font-semibold">Categories</h2>
+                    <p className="mt-1 text-sm text-[#5C6F8D]">
+                      These are the options clients pick from in the quiz, and the specialisms experts can claim.
+                      Add a subcategory to ask a follow-up question once that category is chosen.
+                    </p>
+
+                    <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_340px]">
+                      <div className="space-y-3">
+                        {categoriesLoading ? (
+                          <p className="text-sm text-[#6A7C98]">Loading categories...</p>
+                        ) : categories.length === 0 ? (
+                          <p className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-4 text-sm text-[#6A7C98]">
+                            No categories yet. Add the first one using the form.
+                          </p>
+                        ) : (
+                          categories.map((category) => (
+                            <article key={category.id} className="rounded-2xl border border-[#E1E9F8] bg-[#FCFDFF] p-4">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-sm font-semibold text-[#152540]">{category.label}</p>
+                                    {!category.is_active ? (
+                                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">Hidden</span>
+                                    ) : null}
+                                    {category.segments.map((segment) => (
+                                      <span key={segment} className="rounded-full bg-[#EEF4FF] px-2 py-0.5 text-xs font-medium text-[#2759C9]">
+                                        {SEGMENT_LABELS[segment] || segment}
+                                      </span>
+                                    ))}
+                                  </div>
+                                  {category.support_text ? (
+                                    <p className="mt-1 text-xs text-[#62728C]">{category.support_text}</p>
+                                  ) : null}
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="rounded-lg border-[#D6E1F4] text-xs"
+                                    onClick={() =>
+                                      runAction(
+                                        () => updateAdminCategory(token, category.id, { isActive: !category.is_active }),
+                                        category.is_active ? "Category hidden." : "Category shown.",
+                                      ).then(refreshCategories)
+                                    }
+                                  >
+                                    {category.is_active ? "Hide" : "Show"}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="rounded-lg border-rose-200 text-xs text-rose-600 hover:bg-rose-50"
+                                    onClick={() => {
+                                      if (!window.confirm(`Delete "${category.label}" and its subcategories? Leads already submitted keep their saved category.`)) return;
+                                      void runAction(() => deleteAdminCategory(token, category.id), "Category deleted.").then(refreshCategories);
+                                    }}
+                                  >
+                                    Delete
+                                  </Button>
+                                </div>
+                              </div>
+
+                              {category.children.length > 0 ? (
+                                <div className="mt-3 space-y-2 border-l-2 border-[#E1E9F8] pl-3">
+                                  {category.children.map((child) => (
+                                    <div key={child.id} className="flex flex-wrap items-center justify-between gap-2">
+                                      <div>
+                                        <p className="text-sm text-[#22314C]">{child.label}</p>
+                                        {child.support_text ? (
+                                          <p className="text-xs text-[#62728C]">{child.support_text}</p>
+                                        ) : null}
+                                      </div>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="rounded-lg border-rose-200 text-xs text-rose-600 hover:bg-rose-50"
+                                        onClick={() => {
+                                          if (!window.confirm(`Delete "${child.label}"?`)) return;
+                                          void runAction(() => deleteAdminCategory(token, child.id), "Subcategory deleted.").then(refreshCategories);
+                                        }}
+                                      >
+                                        Delete
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </article>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="rounded-2xl border border-[#E2EAF8] bg-[#FFFDF8] p-4">
+                        <p className="text-sm font-semibold">Add a category</p>
+                        <div className="mt-3 space-y-3">
+                          <div>
+                            <label className="text-xs font-medium text-[#5D6B85]">Name</label>
+                            <input
+                              value={categoryForm.label}
+                              onChange={(event) => setCategoryForm((form) => ({ ...form, label: event.target.value }))}
+                              placeholder="e.g. AI"
+                              className="mt-1 h-10 w-full rounded-lg border border-[#D6E1F4] px-3 text-sm"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-xs font-medium text-[#5D6B85]">Sits under</label>
+                            <select
+                              value={categoryForm.parentId}
+                              onChange={(event) => setCategoryForm((form) => ({ ...form, parentId: event.target.value }))}
+                              className="mt-1 h-10 w-full rounded-lg border border-[#D6E1F4] px-2 text-sm"
+                            >
+                              <option value="">Top level</option>
+                              {categories.map((category) => (
+                                <option key={category.id} value={category.id}>
+                                  {category.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {!categoryForm.parentId ? (
+                            <div>
+                              <label className="text-xs font-medium text-[#5D6B85]">Show to</label>
+                              <div className="mt-1 space-y-1">
+                                {SEGMENT_OPTIONS.map((segment) => (
+                                  <label key={segment.value} className="flex items-center gap-2 text-sm text-[#22314C]">
+                                    <input
+                                      type="checkbox"
+                                      checked={categoryForm.segments.includes(segment.value)}
+                                      onChange={(event) =>
+                                        setCategoryForm((form) => ({
+                                          ...form,
+                                          segments: event.target.checked
+                                            ? [...form.segments, segment.value]
+                                            : form.segments.filter((item) => item !== segment.value),
+                                        }))
+                                      }
+                                    />
+                                    {segment.label}
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-[#62728C]">
+                              Subcategories appear as a follow-up question wherever the parent is shown.
+                            </p>
+                          )}
+
+                          <div>
+                            <label className="text-xs font-medium text-[#5D6B85]">Helper text</label>
+                            <input
+                              value={categoryForm.supportText}
+                              onChange={(event) => setCategoryForm((form) => ({ ...form, supportText: event.target.value }))}
+                              placeholder="Shown under the option in the quiz"
+                              className="mt-1 h-10 w-full rounded-lg border border-[#D6E1F4] px-3 text-sm"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-xs font-medium text-[#5D6B85]">Urgency weight</label>
+                            <input
+                              type="number"
+                              min={0}
+                              max={10}
+                              value={categoryForm.riskPoints}
+                              onChange={(event) => setCategoryForm((form) => ({ ...form, riskPoints: Number(event.target.value) }))}
+                              className="mt-1 h-10 w-full rounded-lg border border-[#D6E1F4] px-3 text-sm"
+                            />
+                            <p className="mt-1 text-xs text-[#8894AC]">0-10. Higher means the lead is scored as more urgent.</p>
+                          </div>
+
+                          <Button
+                            type="button"
+                            className="w-full rounded-xl bg-[#2E67E8] text-white hover:bg-[#2759C9]"
+                            disabled={!categoryForm.label.trim()}
+                            onClick={() =>
+                              runAction(
+                                () =>
+                                  createAdminCategory(token, {
+                                    label: categoryForm.label.trim(),
+                                    parentId: categoryForm.parentId || null,
+                                    segments: categoryForm.segments,
+                                    supportText: categoryForm.supportText.trim(),
+                                    riskPoints: categoryForm.riskPoints,
+                                  }),
+                                "Category added.",
+                              ).then(() => {
+                                setCategoryForm({ label: "", parentId: "", segments: [], supportText: "", riskPoints: 4 });
+                                return refreshCategories();
+                              })
+                            }
+                          >
+                            Add category
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                    Only Admin and Super Admin can manage categories.
+                  </p>
+                )}
               </section>
             ) : null}
 

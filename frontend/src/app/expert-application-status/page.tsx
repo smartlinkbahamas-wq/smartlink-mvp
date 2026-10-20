@@ -26,6 +26,9 @@ function ExpertApplicationStatusContent() {
 
   useEffect(() => {
     let active = true;
+    // Set whenever boot() hands off to another route. The spinner must stay up
+    // through the navigation, so the finally block leaves `loading` alone.
+    let leaving = false;
 
     const boot = async () => {
       try {
@@ -33,12 +36,14 @@ function ExpertApplicationStatusContent() {
         if (!active) return;
 
         if (!canUseExpertSection(session.role)) {
+          leaving = true;
           router.replace("/login");
           return;
         }
 
         const token = getAdminAccessToken();
         if (!token) {
+          leaving = true;
           router.replace("/login");
           return;
         }
@@ -46,12 +51,21 @@ function ExpertApplicationStatusContent() {
         const statusView = await getMyExpertApplicationStatus(token);
         if (!active) return;
 
+        // Already approved: this page has nothing left to tell them. Send them
+        // straight through and keep the spinner up so the progress stepper
+        // never flashes. replace(), not push(), so Back does not come here.
+        if (statusView?.application?.status === "approved") {
+          leaving = true;
+          router.replace("/expert-dashboard");
+          return;
+        }
+
         setData(statusView);
       } catch (loadError) {
         if (!active) return;
         setError(loadError instanceof Error ? loadError.message : "Failed to load application status.");
       } finally {
-        if (!active) return;
+        if (!active || leaving) return;
         setLoading(false);
       }
     };
@@ -74,15 +88,6 @@ function ExpertApplicationStatusContent() {
     }
     return application.review_notes || "";
   }, [application]);
-
-  useEffect(() => {
-    if (application?.status === "approved") {
-      const timer = setTimeout(() => {
-        router.push("/expert-dashboard");
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [application?.status, router]);
 
   if (loading) {
     return (
@@ -231,7 +236,7 @@ function ExpertApplicationStatusContent() {
                     <UserCircle className="w-5 h-5" />
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Expert Name</p>
+                    <p className="text-sm font-semibold text-slate-500 mb-1">Expert Name</p>
                     <p className="text-sm font-medium text-slate-900">{application.expert_name || application.expert_id}</p>
                   </div>
                 </div>
@@ -241,7 +246,7 @@ function ExpertApplicationStatusContent() {
                     <Award className="w-5 h-5" />
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Specialty</p>
+                    <p className="text-sm font-semibold text-slate-500 mb-1">Specialty</p>
                     <p className="text-sm font-medium text-slate-900">{application.expert_role || "Not specified"}</p>
                   </div>
                 </div>
@@ -251,7 +256,7 @@ function ExpertApplicationStatusContent() {
                     <MapPin className="w-5 h-5" />
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Location</p>
+                    <p className="text-sm font-semibold text-slate-500 mb-1">Location</p>
                     <p className="text-sm font-medium text-slate-900">{application.expert_location || "Not specified"}</p>
                   </div>
                 </div>

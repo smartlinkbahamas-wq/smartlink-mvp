@@ -49,6 +49,7 @@ const {
   resolvePendingReviewRecommendations,
   getAdminReportsSummary,
   listAuditLogs,
+  listExpertActivity,
   searchAdminUsers,
   searchExperts,
   searchLeads,
@@ -355,6 +356,11 @@ async function getAuditLogs(req, res) {
   return res.json({ success: true, data: logs });
 }
 
+async function getExpertActivity(req, res) {
+  const logs = await listExpertActivity(req.params.expertId, req.query.limit);
+  return res.json({ success: true, data: logs });
+}
+
 async function getUserSearch(req, res) {
   const data = await searchAdminUsers(req.query.q, req.query.limit);
   return res.json({ success: true, data });
@@ -457,6 +463,7 @@ module.exports = {
   patchReviewModerationByAdmin,
   getReportsSummary,
   getAuditLogs,
+  getExpertActivity,
   getUserSearch,
   getExpertSearch,
   getLeadSearch,

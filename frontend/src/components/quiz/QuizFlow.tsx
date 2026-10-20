@@ -25,9 +25,10 @@ import { Progress } from "@/components/ui/progress";
 import { mockQuizEnginePayload } from "@/data";
 import { saveAssessmentSubmission } from "@/lib/assessment-storage";
 import { rankExpertsForSubmission } from "@/lib/expert-matching";
-import { createLeadInBackend } from "@/lib/backend-api";
+import { createLeadInBackend, getServiceCategories } from "@/lib/backend-api";
 import { cn } from "@/lib/utils";
 import type {
+  ServiceCategory,
   AudienceSegment,
   AssessmentMode,
   AssessmentSubmission,
@@ -976,6 +977,32 @@ function getRiskLevelClasses(riskLevel: DisplayRiskLevel): string {
   return "border-emerald-200 bg-emerald-50 text-emerald-700";
 }
 
+
+const DB_SUBCATEGORY_PROMPT_ID = "db_subcategory";
+
+function categoryToOption(category: ServiceCategory): QuizOption {
+  return {
+    id: category.slug,
+    label: category.label,
+    text: category.label,
+    support: category.support_text || `Support with ${category.label.toLowerCase()}.`,
+    riskPoints: category.risk_points,
+  };
+}
+
+// Categories added in Settings -> Categories are appended to the hardcoded
+// list for the matching audience. The built-in options keep their bespoke
+// follow-up trees; an admin-added category gets the generic tail instead,
+// plus a subcategory question when it has children.
+function getAudienceCategories(categories: ServiceCategory[], audience?: AudienceSegment) {
+  const segment = audience || "business-owner";
+  return categories.filter((category) => category.segments.includes(segment));
+}
+
+function findDbCategory(categories: ServiceCategory[], slug?: string) {
+  return categories.find((category) => category.slug === slug);
+}
+
 function getSelectedOption(options: QuizOption[], selectedId?: string) {
   return options.find((option) => option.id === selectedId);
 }
@@ -986,7 +1013,51 @@ function getHelpOptionsForAudience(audience?: AudienceSegment) {
   return BUSINESS_HELP_OPTIONS;
 }
 
-function getBusinessDiagnosticPrompts(selectedCategory: QuizCategory, selectedNeedId?: string): QuizPrompt[] {
+
+function buildDbCategoryPrompts(
+  category: ServiceCategory,
+  selectedCategory: QuizCategory,
+  urgencyOptions: QuizOption[],
+): QuizPrompt[] {
+  const prompts: QuizPrompt[] = [];
+
+  if (category.children.length > 0) {
+    prompts.push({
+      id: DB_SUBCATEGORY_PROMPT_ID,
+      text: `Which kind of ${category.label.toLowerCase()} do you need help with?`,
+      helper: "This points us at the right specialist.",
+      category: selectedCategory,
+      options: category.children.map(categoryToOption),
+    });
+  }
+
+  prompts.push(
+    { id: "urgency", text: "How urgent is this for you?", helper: FINAL_QUESTIONS_HELPER, category: selectedCategory, options: urgencyOptions },
+    { id: "budget", text: "What budget range are you comfortable with?", helper: "This keeps recommendations aligned with what works for you.", category: selectedCategory, options: BUDGET_OPTIONS },
+    { id: "location", text: "Where are you located?", helper: "We use this to prioritize nearby or remote-friendly experts.", category: selectedCategory, options: LOCATION_OPTIONS },
+  );
+
+  return prompts;
+}
+
+function getBusinessDiagnosticPrompts(selectedCategory: QuizCategory, selectedNeedId?: string, dbCategories: ServiceCategory[] = []): QuizPrompt[] {
+  const extraOptions = getAudienceCategories(dbCategories, "business-owner").map(categoryToOption);
+  const primaryOptions = [...BUSINESS_PRIMARY_HELP_OPTIONS, ...extraOptions];
+  const chosenDbCategory = findDbCategory(dbCategories, selectedNeedId);
+
+  if (chosenDbCategory) {
+    return [
+      {
+        id: BUSINESS_PRIMARY_PROMPT_ID,
+        text: "What do you need help with right now?",
+        helper: "Pick the closest category so we can route you to the right expert type.",
+        category: selectedCategory,
+        options: primaryOptions,
+      },
+      ...buildDbCategoryPrompts(chosenDbCategory, selectedCategory, URGENCY_OPTIONS),
+    ];
+  }
+
   const isKnownNeed = BUSINESS_PRIMARY_HELP_OPTIONS.some((option) => option.id === selectedNeedId);
   const route = (isKnownNeed ? selectedNeedId : "biz_need_start_setup") as BusinessNeedRoute;
   const followUpPrompts = BUSINESS_FOLLOW_UP_PROMPTS[route].map((prompt) => ({
@@ -999,11 +1070,28 @@ function getBusinessDiagnosticPrompts(selectedCategory: QuizCategory, selectedNe
     text: "What do you need help with right now?",
     helper: "Pick the closest category so we can route you to the right expert type.",
     category: selectedCategory,
-    options: BUSINESS_PRIMARY_HELP_OPTIONS,
+    options: primaryOptions,
   }, ...followUpPrompts];
 }
 
-function getPersonalDiagnosticPrompts(selectedCategory: QuizCategory, selectedNeedId?: string): QuizPrompt[] {
+function getPersonalDiagnosticPrompts(selectedCategory: QuizCategory, selectedNeedId?: string, dbCategories: ServiceCategory[] = []): QuizPrompt[] {
+  const extraOptions = getAudienceCategories(dbCategories, "personal-help").map(categoryToOption);
+  const primaryOptions = [...PERSONAL_PRIMARY_HELP_OPTIONS, ...extraOptions];
+  const chosenDbCategory = findDbCategory(dbCategories, selectedNeedId);
+
+  if (chosenDbCategory) {
+    return [
+      {
+        id: PERSONAL_PRIMARY_PROMPT_ID,
+        text: "What do you need help with right now?",
+        helper: "Pick the option that feels closest to what you are dealing with.",
+        category: selectedCategory,
+        options: primaryOptions,
+      },
+      ...buildDbCategoryPrompts(chosenDbCategory, selectedCategory, URGENCY_OPTIONS),
+    ];
+  }
+
   const isKnownNeed = PERSONAL_PRIMARY_HELP_OPTIONS.some((option) => option.id === selectedNeedId);
   const route = (isKnownNeed ? selectedNeedId : "personal_need_not_sure") as PersonalNeedRoute;
   const followUpPrompts = PERSONAL_FOLLOW_UP_PROMPTS[route].map((prompt) => ({
@@ -1016,7 +1104,7 @@ function getPersonalDiagnosticPrompts(selectedCategory: QuizCategory, selectedNe
     text: "What do you need help with right now?",
     helper: "Pick the option that feels closest to what you are dealing with.",
     category: selectedCategory,
-    options: PERSONAL_PRIMARY_HELP_OPTIONS,
+    options: primaryOptions,
   }, ...followUpPrompts];
 }
 
@@ -1060,13 +1148,22 @@ function getBasePrompts(selectedCategory: QuizCategory, audience?: AudienceSegme
   ];
 }
 
-function buildQuizPrompts(selectedRoutingId?: string, audience?: AudienceSegment): QuizPrompt[] {
-  const selectedCategory = HELP_CATEGORY_MAP[selectedRoutingId ?? ""] ?? "General Support";
+function buildQuizPrompts(
+  selectedRoutingId?: string,
+  audience?: AudienceSegment,
+  dbCategories: ServiceCategory[] = [],
+): QuizPrompt[] {
+  const dbCategory = findDbCategory(dbCategories, selectedRoutingId);
+  // An admin-added category has no entry in HELP_CATEGORY_MAP, so its own
+  // label becomes the category carried through to matching.
+  const selectedCategory = (dbCategory?.label as QuizCategory)
+    ?? HELP_CATEGORY_MAP[selectedRoutingId ?? ""]
+    ?? "General Support";
   if (audience === "business-owner") {
-    return getBusinessDiagnosticPrompts(selectedCategory, selectedRoutingId);
+    return getBusinessDiagnosticPrompts(selectedCategory, selectedRoutingId, dbCategories);
   }
   if (audience === "personal-help") {
-    return getPersonalDiagnosticPrompts(selectedCategory, selectedRoutingId);
+    return getPersonalDiagnosticPrompts(selectedCategory, selectedRoutingId, dbCategories);
   }
   const basePrompts = getBasePrompts(selectedCategory, audience);
   if (selectedRoutingId !== "need_cybersecurity") return basePrompts;
@@ -1315,6 +1412,22 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
     : currentAudience === "personal-help"
       ? initialAnswers[PERSONAL_PRIMARY_PROMPT_ID]
       : initialAnswers.problem_need;
+  const [dbCategories, setDbCategories] = useState<ServiceCategory[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    getServiceCategories()
+      .then((rows) => {
+        if (active) setDbCategories(rows);
+      })
+      .catch(() => {
+        // The quiz still works with the built-in categories alone.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const initialPrompts = buildQuizPrompts(initialRoutingId, currentAudience);
 
   const [answers, setAnswers] = useState<Record<string, string>>(() => initialAnswers);
@@ -1354,8 +1467,13 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
       ? answers[PERSONAL_PRIMARY_PROMPT_ID]
       : answers.problem_need;
   const selectedAudienceLabel = AUDIENCE_SEGMENTS.find((segment) => segment.id === currentAudience)?.label;
-  const selectedCategory = HELP_CATEGORY_MAP[selectedRoutingId ?? ""] ?? "General Support";
-  const prompts = useMemo(() => buildQuizPrompts(selectedRoutingId, currentAudience), [selectedRoutingId, currentAudience]);
+  const selectedCategory = (findDbCategory(dbCategories, selectedRoutingId)?.label as QuizCategory)
+    ?? HELP_CATEGORY_MAP[selectedRoutingId ?? ""]
+    ?? "General Support";
+  const prompts = useMemo(
+    () => buildQuizPrompts(selectedRoutingId, currentAudience, dbCategories),
+    [selectedRoutingId, currentAudience, dbCategories],
+  );
   const totalQuestions = prompts.length;
   const answeredCount = prompts.filter((prompt) => Boolean(answers[prompt.id])).length;
   const currentPrompt = prompts[currentIndex];

@@ -498,3 +498,24 @@ create index if not exists idx_user_sessions_user_active
 
 create index if not exists idx_mfa_email_challenge_ticket
   on mfa_email_challenges (login_ticket_hash, created_at desc);
+
+-- Service categories power the quiz's "what do you need help with" step, the
+-- expert application's specialization list, and match scoring. They are data,
+-- not code, so the admin can add a category (e.g. AI) without a deploy.
+-- A row with parent_id set is a subcategory and inherits its parent's segments.
+create table if not exists service_categories (
+  id uuid primary key default gen_random_uuid(),
+  parent_id uuid references service_categories(id) on delete cascade,
+  slug text not null unique,
+  label text not null,
+  support_text text,
+  risk_points integer not null default 4,
+  segments text[] not null default '{}',
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists service_categories_parent_idx on service_categories(parent_id);
+create index if not exists service_categories_active_idx on service_categories(is_active);

@@ -18,6 +18,7 @@ import type { FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
+  getAdminAccessToken,
   registerUser,
   sendEmailOtp,
   signInWithPassword,
@@ -25,6 +26,7 @@ import {
   verifyEmailOtp,
   verifyTotpChallenge,
 } from "@/lib/admin-session";
+import { getMyExpertApplicationStatus } from "@/lib/backend-api";
 
 type SignupRole = "client" | "expert";
 type AuthMode = "signin" | "signup";
@@ -81,13 +83,31 @@ export default function LoginPage() {
     setCaptchaToken("");
   };
 
-  const completeLoginRedirect = (resolvedRole?: string) => {
-    if (["super_admin", "admin", "moderator", "auditor"].includes(String(resolvedRole || ""))) {
+  // An expert whose application is already approved belongs in their workspace,
+  // not on the application-status page they cleared long ago. Anything else
+  // (pending, needs_info, rejected, or an unreadable status) still goes to the
+  // status page, which is where those states are explained.
+  const resolveExpertLanding = async () => {
+    try {
+      const token = getAdminAccessToken();
+      if (!token) return "/expert-application-status";
+      const statusView = await getMyExpertApplicationStatus(token);
+      return statusView?.application?.status === "approved"
+        ? "/expert-dashboard"
+        : "/expert-application-status";
+    } catch {
+      return "/expert-application-status";
+    }
+  };
+
+  const completeLoginRedirect = async (resolvedRole?: string) => {
+    const role = String(resolvedRole || "");
+    if (["super_admin", "admin", "moderator", "auditor"].includes(role)) {
       router.push("/admin");
       return;
     }
-    if (String(resolvedRole || "") === "expert") {
-      router.push("/expert-application-status");
+    if (role === "expert") {
+      router.push(await resolveExpertLanding());
       return;
     }
     router.push("/");
@@ -120,7 +140,7 @@ export default function LoginPage() {
           setMfaMethod(result.methods.includes("totp") ? "totp" : "email_otp");
           setMessage("MFA required. Complete verification to continue.");
         } else {
-          completeLoginRedirect(result.role);
+          await completeLoginRedirect(result.role);
         }
         return;
       }
@@ -137,7 +157,7 @@ export default function LoginPage() {
         setMfaMethod(result.methods.includes("totp") ? "totp" : "email_otp");
         setMessage("MFA required. Complete verification to continue.");
       } else {
-        completeLoginRedirect(result.role);
+        await completeLoginRedirect(result.role);
       }
     } catch (submitError) {
       const code = getErrorCode(submitError);
@@ -186,10 +206,10 @@ export default function LoginPage() {
     try {
       if (mfaMethod === "totp") {
         const response = await verifyTotpChallenge(mfaTicket, mfaCode.trim());
-        completeLoginRedirect(response.role);
+        await completeLoginRedirect(response.role);
       } else {
         const response = await verifyEmailOtp(mfaTicket, mfaCode.trim());
-        completeLoginRedirect(response.role);
+        await completeLoginRedirect(response.role);
       }
     } catch (verifyError) {
       setError(verifyError instanceof Error ? verifyError.message : "Failed to verify MFA.");

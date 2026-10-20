@@ -1,5 +1,6 @@
 import type {
   AdminAuditLogRecord,
+  ServiceCategory,
   AdminFairnessSettings,
   AdminMatchOverrideRecord,
   AdminMe,
@@ -162,6 +163,60 @@ export async function getReportsSummary(token: string) {
 export async function getAuditLogs(token: string) {
   const response = await requestJson<{ success: boolean; data: AdminAuditLogRecord[] }>("/admin/audit-logs", token);
   return response.data;
+}
+
+export async function getExpertActivity(token: string, expertId: string) {
+  const response = await requestJson<{ success: boolean; data: AdminAuditLogRecord[] }>(
+    `/admin/experts/${encodeURIComponent(expertId)}/activity`,
+    token,
+  );
+  return response.data;
+}
+
+export async function getAdminCategories(token: string) {
+  const response = await requestJson<{ success: boolean; data: ServiceCategory[] }>("/admin/categories", token);
+  return response.data;
+}
+
+export async function createAdminCategory(
+  token: string,
+  payload: {
+    label: string;
+    parentId?: string | null;
+    segments?: string[];
+    supportText?: string;
+    riskPoints?: number;
+    sortOrder?: number;
+  },
+) {
+  const response = await requestJson<{ success: boolean; data: ServiceCategory }>("/admin/categories", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return response.data;
+}
+
+export async function updateAdminCategory(
+  token: string,
+  id: string,
+  payload: {
+    label?: string;
+    segments?: string[];
+    supportText?: string;
+    riskPoints?: number;
+    sortOrder?: number;
+    isActive?: boolean;
+  },
+) {
+  const response = await requestJson<{ success: boolean; data: ServiceCategory }>(`/admin/categories/${id}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return response.data;
+}
+
+export async function deleteAdminCategory(token: string, id: string) {
+  await requestJson<{ success: boolean }>(`/admin/categories/${id}`, token, { method: "DELETE" });
 }
 
 export async function getPricingSettings(token: string) {

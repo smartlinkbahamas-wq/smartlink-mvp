@@ -571,3 +571,18 @@ export interface AdminReviewsFeedbackSummary {
     }>;
   };
 }
+
+export type CategorySegment = "business-owner" | "personal-help" | "not-sure";
+
+export interface ServiceCategory {
+  id: string;
+  parent_id: string | null;
+  slug: string;
+  label: string;
+  support_text: string | null;
+  risk_points: number;
+  segments: CategorySegment[];
+  sort_order: number;
+  is_active: boolean;
+  children: ServiceCategory[];
+}

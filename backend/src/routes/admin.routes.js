@@ -31,6 +31,7 @@ const {
   patchReviewModerationByAdmin,
   getReportsSummary,
   getAuditLogs,
+  getExpertActivity,
   getUserSearch,
   getExpertSearch,
   getLeadSearch,
@@ -40,6 +41,12 @@ const {
 const { ADMIN_PERMISSIONS } = require("../constants/admin-rbac");
 const { requireAdminAuth, requirePermission } = require("../middleware/admin-jwt-auth");
 const { asyncHandler } = require("../utils/async-handler");
+const {
+  getAdminCategories,
+  postCategory,
+  patchCategory,
+  removeCategory,
+} = require("../controllers/category.controller");
 
 const adminRouter = express.Router();
 
@@ -89,6 +96,12 @@ adminRouter.patch("/reviews/:id/moderate", requirePermission(ADMIN_PERMISSIONS.R
 
 adminRouter.get("/reports/summary", requirePermission(ADMIN_PERMISSIONS.REPORT_VIEW), asyncHandler(getReportsSummary));
 adminRouter.get("/audit-logs", requirePermission(ADMIN_PERMISSIONS.AUDIT_VIEW), asyncHandler(getAuditLogs));
+adminRouter.get("/categories", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANAGE), asyncHandler(getAdminCategories));
+adminRouter.post("/categories", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANAGE), asyncHandler(postCategory));
+adminRouter.patch("/categories/:id", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANAGE), asyncHandler(patchCategory));
+adminRouter.delete("/categories/:id", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANAGE), asyncHandler(removeCategory));
+
+adminRouter.get("/experts/:expertId/activity", requirePermission(ADMIN_PERMISSIONS.AUDIT_VIEW), asyncHandler(getExpertActivity));
 
 module.exports = {
   adminRouter,

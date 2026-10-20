@@ -27,43 +27,57 @@ export default function ExpertDashboardOverview() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Bumped by "Try again" to re-run the loader.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let active = true;
+    // Set when loadData() hands off to another route, so the finally block
+    // leaves the spinner up instead of flashing the error card mid-navigation.
+    let leaving = false;
+
     async function loadData() {
       try {
+        setLoading(true);
+        setErrorMsg(null);
+
         const session = await getSessionMe();
         if (!active) return;
 
         if (!canUseExpertSection(session.role)) {
+          leaving = true;
           router.replace("/login");
           return;
         }
 
         const token = getAdminAccessToken();
         if (!token) {
+          leaving = true;
           router.replace("/login");
           return;
         }
 
         const response = await getExpertDashboardData(token);
         if (!active) return;
+
+        setData(response);
       } catch (error: any) {
         console.error("Failed to load dashboard data:", error);
         const msg = String(error?.message || error).toLowerCase();
         if (msg.includes("expired") || msg.includes("invalid") || msg.includes("session") || msg.includes("401")) {
           clearAdminSession();
+          leaving = true;
           router.replace("/login?expired=true");
           return;
         }
         setErrorMsg(error.message || String(error));
       } finally {
-        if (active) setLoading(false);
+        if (active && !leaving) setLoading(false);
       }
     }
     loadData();
     return () => { active = false; };
-  }, [router]);
+  }, [router, reloadKey]);
 
   if (loading) {
     return (
@@ -73,12 +87,26 @@ export default function ExpertDashboardOverview() {
     );
   }
 
-  if (errorMsg) {
-    return <div>Error loading dashboard: {errorMsg}</div>;
-  }
-
-  if (!data) {
-    return <div>Error loading dashboard. No data returned. Please try again.</div>;
+  if (errorMsg || !data) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <div className="max-w-md rounded-2xl border border-gray-100 bg-white p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-rose-50 text-rose-600 dark:bg-rose-950/30">
+            <AlertCircle className="h-6 w-6" />
+          </div>
+          <h2 className="mt-4 text-lg font-bold text-gray-900 dark:text-white">We couldn&apos;t load your dashboard</h2>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+            {errorMsg || "The server didn't return any dashboard data."}
+          </p>
+          <button
+            onClick={() => setReloadKey((key) => key + 1)}
+            className="mt-6 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const { profile, metrics, actionItems, opportunities } = data;
@@ -88,11 +116,11 @@ export default function ExpertDashboardOverview() {
       {/* Welcome Banner */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-violet-600 via-indigo-600 to-blue-600 p-8 text-white shadow-xl">
         <div className="relative z-10 max-w-xl">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-white backdrop-blur-md">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold text-white backdrop-blur-md">
             <Sparkles className="h-3 w-3" />
             Expert Workspace
           </span>
-          <h1 className="mt-4 text-3xl font-black tracking-tight md:text-4xl">
+          <h1 className="mt-4 text-3xl font-bold tracking-tight md:text-4xl">
             Welcome back, {profile?.name || "Expert Partner"}!
           </h1>
           <p className="mt-2 text-indigo-100 text-[0.98rem] leading-6">
@@ -244,12 +272,12 @@ function MetricCard({ title, value, icon: Icon, colorClass, bgClass }: { title: 
   return (
     <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-md p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
       <div className="flex items-center justify-between mb-4">
-        <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{title}</span>
+        <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{title}</span>
         <div className={`p-2 rounded-xl ${bgClass} ${colorClass}`}>
           <Icon className="w-5 h-5" />
         </div>
       </div>
-      <p className="text-3xl font-black text-gray-900 dark:text-white tracking-tight">{value !== undefined ? value : "0"}</p>
+      <p className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">{value !== undefined ? value : "0"}</p>
     </div>
   );
 }

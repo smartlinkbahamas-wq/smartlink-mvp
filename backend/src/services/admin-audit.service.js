@@ -119,7 +119,66 @@ async function listAuditLogs(limit = 200) {
     .map(({ _sort_timestamp, ...row }) => row);
 }
 
+// An expert's history is not stored in one place: audit rows point either at
+// the expert itself, at one of their applications, or at a review written
+// about them. Collect those ids first, then pull every row that targets any of
+// them, so the directory shows the whole story rather than the expert slice.
+async function listExpertActivity(expertId, limit = 100) {
+  if (!expertId) {
+    throw new AppError("expertId is required to load expert activity.", 400);
+  }
+
+  const supabase = requireSupabase();
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
+
+  const [applicationsQuery, reviewsQuery] = await Promise.all([
+    supabase.from("expert_applications").select("application_id").eq("expert_id", expertId),
+    supabase.from("expert_reviews").select("feedback_id").eq("expert_id", expertId),
+  ]);
+
+  const targetIds = [
+    expertId,
+    ...(applicationsQuery.data || []).map((row) => row.application_id),
+    ...(reviewsQuery.data || []).map((row) => row.feedback_id),
+  ].filter(Boolean);
+
+  const { data, error } = await supabase
+    .from("admin_audit_logs")
+    .select("*")
+    .in("target_id", targetIds)
+    .order("timestamp", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new AppError("Failed to load expert activity.", 500, error.message);
+  }
+
+  const rows = data || [];
+  const userIds = [...new Set(rows.map((row) => row.user_id).filter(Boolean))];
+
+  let usersById = {};
+  if (userIds.length > 0) {
+    const { data: authUsers, error: usersError } = await supabase.auth.admin.listUsers({
+      page: 1,
+      perPage: 500,
+    });
+    if (usersError) {
+      throw new AppError("Failed to resolve expert activity users.", 500, usersError.message);
+    }
+    usersById = (authUsers?.users || []).reduce((acc, user) => {
+      acc[user.id] = user.email || null;
+      return acc;
+    }, {});
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    user_email: row.user_id ? usersById[row.user_id] || null : null,
+  }));
+}
+
 module.exports = {
   appendAdminAuditLog,
   listAuditLogs,
+  listExpertActivity,
 };

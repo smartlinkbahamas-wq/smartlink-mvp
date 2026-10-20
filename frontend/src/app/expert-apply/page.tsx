@@ -23,18 +23,20 @@ import {
 import { InnerNav } from "@/components/navigation/inner-nav";
 import { Button } from "@/components/ui/button";
 import { getAdminAccessToken, getSessionMe, clearAdminSession } from "@/lib/admin-session";
-import { getMyExpertApplicationStatus, submitExpertApplicationToBackend, uploadExpertDocumentToBackend } from "@/lib/backend-api";
+import { getMyExpertApplicationStatus, getSpecializationOptions, submitExpertApplicationToBackend, uploadExpertDocumentToBackend } from "@/lib/backend-api";
 import { canUseExpertSection } from "@/lib/role-guard";
 
 const EXPERT_DRAFT_STORAGE_KEY = "smartlink:expert-application-draft";
 
-const specializationOptions = [
+// Falls back to the original fixed list if the categories endpoint is
+// unreachable, so the application form never loses its specialism field.
+const FALLBACK_SPECIALIZATIONS = [
   "Business Setup",
   "Cybersecurity",
   "Accounting",
   "Legal",
   "IT Support",
-] as const;
+];
 
 const availabilityOptions = ["Available now", "This week", "Not available"] as const;
 
@@ -122,6 +124,23 @@ function ExpertApplyContent() {
   const searchParams = useSearchParams();
   const allowResubmit = searchParams.get("resubmit") === "1";
   const [draft, setDraft] = useState<ExpertApplicationDraft>(defaultDraft);
+  const [specializationOptions, setSpecializationOptions] = useState<string[]>(FALLBACK_SPECIALIZATIONS);
+
+  // Same list the client picks from in the quiz, so a category an admin adds
+  // can actually be claimed by an expert and matched against.
+  useEffect(() => {
+    let active = true;
+    getSpecializationOptions()
+      .then((options) => {
+        if (active && options.length > 0) setSpecializationOptions(options);
+      })
+      .catch(() => {
+        // Keep the fallback list.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
   const [currentStep, setCurrentStep] = useState(0);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -384,7 +403,7 @@ function ExpertApplyContent() {
 
         {/* ── HERO ── */}
         <section className="mt-6 rounded-2xl border border-[#D9E3F3] bg-white px-7 py-6 shadow-sm">
-          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[#356AF6]">Expert Network</p>
+          <p className="text-sm font-semibold text-[#356AF6]">Expert Network</p>
           <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-[#111827]">
             Join SmartLink and get matched with qualified clients in your area
           </h1>
@@ -453,7 +472,7 @@ function ExpertApplyContent() {
             {/* STEP 0 — Profile */}
             {currentStep === 0 && (
               <section className="rounded-2xl border border-[#D9E3F3] bg-white p-5 shadow-sm">
-                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#7B89A2]">
+                <p className="flex items-center gap-2 text-sm font-semibold text-[#7B89A2]">
                   <UserRound className="h-3.5 w-3.5 text-[#356AF6]" />
                   Profile Details
                 </p>
@@ -537,7 +556,7 @@ function ExpertApplyContent() {
             {/* STEP 1 — Documents */}
             {currentStep === 1 && (
               <section className="rounded-2xl border border-[#D9E3F3] bg-white p-5 shadow-sm">
-                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#7B89A2]">
+                <p className="flex items-center gap-2 text-sm font-semibold text-[#7B89A2]">
                   <ShieldCheck className="h-3.5 w-3.5 text-[#356AF6]" />
                   Credentials &amp; Documents
                 </p>
@@ -597,7 +616,7 @@ function ExpertApplyContent() {
             {/* STEP 2 — Availability */}
             {currentStep === 2 && (
               <section className="rounded-2xl border border-[#D9E3F3] bg-white p-5 shadow-sm">
-                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#7B89A2]">
+                <p className="flex items-center gap-2 text-sm font-semibold text-[#7B89A2]">
                   <MapPin className="h-3.5 w-3.5 text-[#356AF6]" />
                   Availability &amp; Preferences
                 </p>
@@ -664,14 +683,14 @@ function ExpertApplyContent() {
             {/* STEP 3 — Review & Submit */}
             {currentStep === 3 && (
               <section className="rounded-2xl border border-[#D9E3F3] bg-white p-5 shadow-sm">
-                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#7B89A2]">
+                <p className="flex items-center gap-2 text-sm font-semibold text-[#7B89A2]">
                   <BadgeCheck className="h-3.5 w-3.5 text-[#356AF6]" />
                   Review &amp; Submit
                 </p>
 
                 {/* Profile summary */}
                 <div className="mt-4 rounded-xl border border-[#D9E3F3] bg-[#F8FBFF] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#7B89A2]">Profile Summary</p>
+                  <p className="text-sm font-semibold text-[#7B89A2]">Profile Summary</p>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2 text-sm">
                     {[
                       { l: "Name", v: draft.fullName || "—" },
@@ -693,7 +712,7 @@ function ExpertApplyContent() {
 
                 {/* Documents summary */}
                 <div className="mt-3 rounded-xl border border-[#D9E3F3] bg-[#F8FBFF] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#7B89A2]">Documents</p>
+                  <p className="text-sm font-semibold text-[#7B89A2]">Documents</p>
                   <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
                     {uploadFields.map(({ label, key }) => {
                       const status = getChecklistStatus(draft[key]);
@@ -795,7 +814,7 @@ function ExpertApplyContent() {
 
             {/* Live preview card */}
             <section className="rounded-2xl border border-[#D9E3F3] bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7B89A2]">Profile Preview</p>
+              <p className="text-sm font-semibold text-[#7B89A2]">Profile Preview</p>
               <p className="mt-1 text-[0.7rem] text-[#A0AECB]">How you appear to clients in matching results</p>
               <div className="mt-4 flex items-start gap-3">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#EEF3FF] text-base font-semibold text-[#356AF6]">
@@ -833,7 +852,7 @@ function ExpertApplyContent() {
 
             {/* Dynamic checklist */}
             <section className="rounded-2xl border border-[#D9E3F3] bg-white p-5 shadow-sm">
-              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#7B89A2]">
+              <p className="flex items-center gap-2 text-sm font-semibold text-[#7B89A2]">
                 <BadgeCheck className="h-3.5 w-3.5 text-[#356AF6]" />
                 Document Checklist
               </p>
@@ -856,7 +875,7 @@ function ExpertApplyContent() {
 
             {/* Match preview */}
             <section className="rounded-2xl border border-[#D9E3F3] bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7B89A2]">Example Client Requests</p>
+              <p className="text-sm font-semibold text-[#7B89A2]">Example Client Requests</p>
               <p className="mt-1 text-[0.7rem] text-[#A0AECB]">The types of requests you may receive once approved</p>
               <div className="mt-3 space-y-2.5">
                 {[
@@ -874,7 +893,7 @@ function ExpertApplyContent() {
 
             {/* What happens after approval */}
             <section className="rounded-2xl border border-[#D9E3F3] bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7B89A2]">After Approval</p>
+              <p className="text-sm font-semibold text-[#7B89A2]">After Approval</p>
               <ol className="mt-4 space-y-3">
                 {[
                   "You'll receive matched client requests directly.",

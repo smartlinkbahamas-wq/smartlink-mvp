@@ -10,6 +10,7 @@ const { adminRouter } = require("./admin.routes");
 const { expertsRouter } = require("./experts.routes");
 const { authRouter } = require("./auth.routes");
 const { clientRouter } = require("./client.routes");
+const { categoryRouter } = require("./category.routes");
 
 const apiRouter = express.Router();
 
@@ -23,6 +24,7 @@ apiRouter.use("/admin", adminRouter);
 apiRouter.use("/experts", expertsRouter);
 apiRouter.use("/auth", authRouter);
 apiRouter.use("/client", clientRouter);
+apiRouter.use("/categories", categoryRouter);
 
 module.exports = {
   apiRouter,
