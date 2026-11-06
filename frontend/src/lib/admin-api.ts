@@ -1,6 +1,7 @@
 import type {
   AdminAuditLogRecord,
   ServiceCategory,
+  CategoryQuestion,
   AdminFairnessSettings,
   AdminMatchOverrideRecord,
   AdminMe,
@@ -217,6 +218,36 @@ export async function updateAdminCategory(
 
 export async function deleteAdminCategory(token: string, id: string) {
   await requestJson<{ success: boolean }>(`/admin/categories/${id}`, token, { method: "DELETE" });
+}
+
+export async function createCategoryQuestion(
+  token: string,
+  categoryId: string,
+  payload: { text: string; helper?: string; options: { label: string; support?: string; riskPoints?: number }[]; sortOrder?: number },
+) {
+  const response = await requestJson<{ success: boolean; data: CategoryQuestion }>(
+    `/admin/categories/${categoryId}/questions`,
+    token,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+  return response.data;
+}
+
+export async function updateCategoryQuestion(
+  token: string,
+  id: string,
+  payload: { text?: string; helper?: string; options?: { label: string; support?: string; riskPoints?: number }[]; isActive?: boolean; sortOrder?: number },
+) {
+  const response = await requestJson<{ success: boolean; data: CategoryQuestion }>(
+    `/admin/category-questions/${id}`,
+    token,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+  return response.data;
+}
+
+export async function deleteCategoryQuestion(token: string, id: string) {
+  await requestJson<{ success: boolean }>(`/admin/category-questions/${id}`, token, { method: "DELETE" });
 }
 
 export async function getPricingSettings(token: string) {

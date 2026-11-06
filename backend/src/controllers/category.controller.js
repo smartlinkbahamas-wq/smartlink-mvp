@@ -5,6 +5,9 @@ const {
   createCategory,
   updateCategory,
   deleteCategory,
+  createQuestion,
+  updateQuestion,
+  deleteQuestion,
 } = require("../services/category.service");
 const { appendAdminAuditLog } = require("../services/admin-audit.service");
 
@@ -75,6 +78,57 @@ async function removeCategory(req, res) {
   return res.json({ success: true, data: { id: deleted.id } });
 }
 
+async function postQuestion(req, res) {
+  const created = await createQuestion(req.params.categoryId, req.body || {});
+
+  await appendAdminAuditLog({
+    req,
+    actor: req.adminActor,
+    actionType: "category_question_create",
+    targetType: "category_question",
+    targetId: created.id,
+    previousValue: null,
+    newValue: created,
+    notes: `Added question "${created.text}".`,
+  });
+
+  return res.status(201).json({ success: true, data: created });
+}
+
+async function patchQuestion(req, res) {
+  const updated = await updateQuestion(req.params.id, req.body || {});
+
+  await appendAdminAuditLog({
+    req,
+    actor: req.adminActor,
+    actionType: "category_question_update",
+    targetType: "category_question",
+    targetId: updated.id,
+    previousValue: null,
+    newValue: updated,
+    notes: `Updated question "${updated.text}".`,
+  });
+
+  return res.json({ success: true, data: updated });
+}
+
+async function removeQuestion(req, res) {
+  const deleted = await deleteQuestion(req.params.id);
+
+  await appendAdminAuditLog({
+    req,
+    actor: req.adminActor,
+    actionType: "category_question_delete",
+    targetType: "category_question",
+    targetId: deleted.id,
+    previousValue: deleted,
+    newValue: null,
+    notes: `Deleted question "${deleted.text}".`,
+  });
+
+  return res.json({ success: true, data: { id: deleted.id } });
+}
+
 module.exports = {
   getPublicCategories,
   getSpecializations,
@@ -82,4 +136,7 @@ module.exports = {
   postCategory,
   patchCategory,
   removeCategory,
+  postQuestion,
+  patchQuestion,
+  removeQuestion,
 };

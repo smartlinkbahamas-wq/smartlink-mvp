@@ -17,6 +17,7 @@ const {
   changePassword,
   beginSocialLogin,
   exchangeSupabaseSession,
+  loginWithFirebase,
   disableTotp,
 } = require("../services/auth.service");
 const {
@@ -24,6 +25,7 @@ const {
   loginPasswordSchema,
   socialLoginSchema,
   socialExchangeSchema,
+  firebaseLoginSchema,
   mfaTicketSchema,
   mfaTotpVerifySchema,
   mfaTotpChallengeSchema,
@@ -84,6 +86,16 @@ async function postLoginSocial(req, res) {
 async function postLoginSocialExchange(req, res) {
   const payload = parseWithSchema(socialExchangeSchema, req.body, "Invalid social exchange payload.");
   const data = await exchangeSupabaseSession(req, payload);
+  return res.json({
+    success: true,
+    message: data.mfaRequired ? "MFA challenge required." : "Login successful.",
+    data,
+  });
+}
+
+async function postLoginFirebase(req, res) {
+  const payload = parseWithSchema(firebaseLoginSchema, req.body, "Invalid Google sign-in payload.");
+  const data = await loginWithFirebase(req, payload);
   return res.json({
     success: true,
     message: data.mfaRequired ? "MFA challenge required." : "Login successful.",
@@ -207,6 +219,7 @@ module.exports = {
   postLoginPassword,
   postLoginSocial,
   postLoginSocialExchange,
+  postLoginFirebase,
   postMfaEmailSend,
   postMfaEmailVerify,
   postMfaTotpEnroll,

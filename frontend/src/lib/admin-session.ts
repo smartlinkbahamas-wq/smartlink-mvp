@@ -148,6 +148,23 @@ export async function startSocialLogin(provider: SocialProvider, redirectTo: str
   return response.data;
 }
 
+export async function loginWithFirebaseIdToken(idToken: string) {
+  const response = await requestJson<AuthApiResponse<LoginResult>>("/auth/login/firebase", {
+    method: "POST",
+    body: JSON.stringify({ idToken }),
+  });
+
+  if (!response.data.mfaRequired) {
+    persistSession({
+      accessToken: response.data.accessToken,
+      refreshToken: response.data.refreshToken,
+      role: response.data.role,
+    });
+  }
+
+  return response.data;
+}
+
 export async function exchangeSocialToken(supabaseAccessToken: string) {
   const response = await requestJson<AuthApiResponse<LoginResult>>("/auth/login/social/exchange", {
     method: "POST",

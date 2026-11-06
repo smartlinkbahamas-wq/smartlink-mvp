@@ -574,6 +574,24 @@ export interface AdminReviewsFeedbackSummary {
 
 export type CategorySegment = "business-owner" | "personal-help" | "not-sure";
 
+export interface CategoryQuestionOption {
+  id: string;
+  label: string;
+  support: string;
+  riskPoints: number;
+}
+
+export interface CategoryQuestion {
+  id: string;
+  category_id: string;
+  slug: string;
+  text: string;
+  helper: string | null;
+  options: CategoryQuestionOption[];
+  sort_order: number;
+  is_active: boolean;
+}
+
 export interface ServiceCategory {
   id: string;
   parent_id: string | null;
@@ -584,5 +602,6 @@ export interface ServiceCategory {
   segments: CategorySegment[];
   sort_order: number;
   is_active: boolean;
+  questions: CategoryQuestion[];
   children: ServiceCategory[];
 }

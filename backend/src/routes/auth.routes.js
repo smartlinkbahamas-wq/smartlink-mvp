@@ -5,6 +5,7 @@ const {
   postLoginPassword,
   postLoginSocial,
   postLoginSocialExchange,
+  postLoginFirebase,
   postMfaEmailSend,
   postMfaEmailVerify,
   postMfaTotpEnroll,
@@ -27,6 +28,7 @@ authRouter.post("/register", asyncHandler(postRegister));
 authRouter.post("/login/password", authLoginRateLimit, asyncHandler(postLoginPassword));
 authRouter.post("/login/social", asyncHandler(postLoginSocial));
 authRouter.post("/login/social/exchange", asyncHandler(postLoginSocialExchange));
+authRouter.post("/login/firebase", asyncHandler(postLoginFirebase));
 
 authRouter.post("/mfa/totp/enroll", asyncHandler(postMfaTotpEnroll));
 authRouter.post("/mfa/totp/verify", asyncHandler(postMfaTotpVerify));

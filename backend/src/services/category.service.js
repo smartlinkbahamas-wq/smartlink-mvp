@@ -49,11 +49,13 @@ async function fetchCategoryRows(includeInactive) {
 // Public: only active rows, and a parent that is inactive takes its children
 // with it (buildTree drops orphans whose parent was filtered out).
 async function listPublicCategories() {
-  return buildTree(await fetchCategoryRows(false));
+  const [rows, questions] = await Promise.all([fetchCategoryRows(false), fetchQuestionRows(false)]);
+  return attachQuestions(buildTree(rows), questions);
 }
 
 async function listAdminCategories() {
-  return buildTree(await fetchCategoryRows(true));
+  const [rows, questions] = await Promise.all([fetchCategoryRows(true), fetchQuestionRows(true)]);
+  return attachQuestions(buildTree(rows), questions);
 }
 
 // Every top-level label, used as the expert application's specialization list
@@ -184,6 +186,156 @@ async function deleteCategory(id) {
   return existing;
 }
 
+
+function normalizeOptions(options) {
+  if (!Array.isArray(options)) return [];
+  return options
+    .map((option, index) => {
+      const label = String(option?.label || "").trim();
+      if (!label) return null;
+      return {
+        id: toSlug(option?.id) || `opt_${toSlug(label)}`,
+        label,
+        support: option?.support ? String(option.support).trim() : "",
+        riskPoints: Number.isFinite(Number(option?.riskPoints)) ? Number(option.riskPoints) : 4,
+        sortOrder: index,
+      };
+    })
+    .filter(Boolean);
+}
+
+async function fetchQuestionRows(includeInactive) {
+  const supabase = requireSupabase();
+  let query = supabase.from("category_questions").select("*");
+  if (!includeInactive) {
+    query = query.eq("is_active", true);
+  }
+  const { data, error } = await query.order("sort_order", { ascending: true });
+  if (error) {
+    // The table is optional until the migration is applied; an unconfigured
+    // install should still serve categories rather than fail the quiz.
+    if (error.code === "42P01" || /schema cache/i.test(error.message || "")) return [];
+    throw new AppError("Failed to load category questions.", 500, error.message);
+  }
+  return data || [];
+}
+
+function attachQuestions(tree, questionRows) {
+  const byCategory = new Map();
+  questionRows.forEach((row) => {
+    if (!byCategory.has(row.category_id)) byCategory.set(row.category_id, []);
+    byCategory.get(row.category_id).push(row);
+  });
+
+  const walk = (nodes) =>
+    nodes.map((node) => ({
+      ...node,
+      questions: (byCategory.get(node.id) || []).sort((a, b) => a.sort_order - b.sort_order),
+      children: walk(node.children || []),
+    }));
+
+  return walk(tree);
+}
+
+async function createQuestion(categoryId, payload) {
+  const supabase = requireSupabase();
+
+  const text = String(payload.text || "").trim();
+  if (!text) {
+    throw new AppError("A question is required.", 400);
+  }
+
+  const options = normalizeOptions(payload.options);
+  if (options.length < 2) {
+    throw new AppError("Add at least two answers for this question.", 400);
+  }
+
+  const { data: category } = await supabase
+    .from("service_categories")
+    .select("id")
+    .eq("id", categoryId)
+    .maybeSingle();
+  if (!category) {
+    throw new AppError("Category not found.", 404);
+  }
+
+  const row = {
+    category_id: categoryId,
+    slug: toSlug(payload.slug) || `q_${toSlug(text).slice(0, 40)}_${Date.now().toString(36)}`,
+    text,
+    helper: payload.helper ? String(payload.helper).trim() : null,
+    options,
+    sort_order: Number.isFinite(Number(payload.sortOrder)) ? Number(payload.sortOrder) : 0,
+    is_active: payload.isActive !== false,
+  };
+
+  const { data, error } = await supabase.from("category_questions").insert(row).select("*").single();
+  if (error) {
+    if (error.code === "23505") {
+      throw new AppError(`A question with the key "${row.slug}" already exists.`, 409);
+    }
+    throw new AppError("Failed to create the question.", 500, error.message);
+  }
+  return data;
+}
+
+async function updateQuestion(id, payload) {
+  const supabase = requireSupabase();
+  const updates = { updated_at: new Date().toISOString() };
+
+  if (payload.text !== undefined) {
+    const text = String(payload.text).trim();
+    if (!text) throw new AppError("A question is required.", 400);
+    updates.text = text;
+  }
+  if (payload.helper !== undefined) {
+    updates.helper = payload.helper ? String(payload.helper).trim() : null;
+  }
+  if (payload.options !== undefined) {
+    const options = normalizeOptions(payload.options);
+    if (options.length < 2) {
+      throw new AppError("Add at least two answers for this question.", 400);
+    }
+    updates.options = options;
+  }
+  if (payload.sortOrder !== undefined) updates.sort_order = Number(payload.sortOrder) || 0;
+  if (payload.isActive !== undefined) updates.is_active = Boolean(payload.isActive);
+
+  const { data, error } = await supabase
+    .from("category_questions")
+    .update(updates)
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new AppError("Failed to update the question.", 500, error.message);
+  }
+  if (!data) {
+    throw new AppError("Question not found.", 404);
+  }
+  return data;
+}
+
+async function deleteQuestion(id) {
+  const supabase = requireSupabase();
+  const { data: existing } = await supabase
+    .from("category_questions")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!existing) {
+    throw new AppError("Question not found.", 404);
+  }
+
+  const { error } = await supabase.from("category_questions").delete().eq("id", id);
+  if (error) {
+    throw new AppError("Failed to delete the question.", 500, error.message);
+  }
+  return existing;
+}
+
 module.exports = {
   SEGMENTS,
   listPublicCategories,
@@ -192,4 +344,7 @@ module.exports = {
   createCategory,
   updateCategory,
   deleteCategory,
+  createQuestion,
+  updateQuestion,
+  deleteQuestion,
 };

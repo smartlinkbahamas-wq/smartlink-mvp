@@ -812,9 +812,9 @@ async function registerUser(req, payload) {
 
   let actionLink = null;
   if (env.AUTH_REQUIRE_EMAIL_VERIFICATION && user?.email) {
-    let origin = req.headers?.origin || env.AUTH_VERIFY_REDIRECT_URL || "https://linksmartbahamas.com/results?verified=true";
+    let origin = req.headers?.origin || env.AUTH_VERIFY_REDIRECT_URL || "https://smartlinkbahamas.com/results?verified=true";
     if (!origin || origin.includes("localhost:5000") || (origin.includes("localhost") && (process.env.NODE_ENV === "production" || !req.headers?.origin))) {
-      origin = "https://linksmartbahamas.com/results?verified=true";
+      origin = "https://smartlinkbahamas.com/results?verified=true";
     }
     try {
       const { data, error } = await client.auth.admin.generateLink({
@@ -1420,14 +1420,14 @@ async function revokeAllSessions(req, accessToken) {
 async function resendVerificationEmail(email, redirectUrl = null) {
   const normalizedEmail = normalizeEmail(email);
   const client = requireSupabaseClient();
-  let targetRedirect = redirectUrl || env.AUTH_VERIFY_REDIRECT_URL || "https://linksmartbahamas.com/results?verified=true";
+  let targetRedirect = redirectUrl || env.AUTH_VERIFY_REDIRECT_URL || "https://smartlinkbahamas.com/results?verified=true";
 
   if (
     !targetRedirect ||
     targetRedirect.includes("localhost:5000") ||
     (targetRedirect.includes("localhost") && (process.env.NODE_ENV === "production" || !redirectUrl?.includes("localhost:3000")))
   ) {
-    targetRedirect = "https://linksmartbahamas.com/results?verified=true";
+    targetRedirect = "https://smartlinkbahamas.com/results?verified=true";
   } else if (targetRedirect.endsWith("http://localhost:3000") || targetRedirect.endsWith("http://localhost:3000/")) {
     targetRedirect = `${targetRedirect.replace(/\/$/, "")}/results?verified=true`;
   }
@@ -1676,6 +1676,92 @@ async function disableTotp(userId) {
   return { success: true };
 }
 
+
+// Google sign-in via Firebase. Firebase only proves who the Google account
+// belongs to; Supabase stays the user store, so an existing account is matched
+// by email and everything downstream (roles, MFA, sessions, expert links)
+// behaves exactly as it does for a password login.
+async function loginWithFirebase(req, payload) {
+  const { verifyFirebaseIdToken } = require("./firebase-admin.service");
+  const client = requireSupabaseClient();
+
+  const identity = await verifyFirebaseIdToken(payload?.idToken);
+  const email = normalizeEmail(identity.email);
+
+  let user = await findAuthUserByEmail(email);
+
+  if (!user) {
+    // First time this person has signed in. Google has already verified the
+    // address, so the account starts confirmed and never needs a verify email.
+    const { data, error } = await client.auth.admin.createUser({
+      email,
+      email_confirm: true,
+      user_metadata: {
+        full_name: identity.fullName,
+        avatar_url: identity.picture,
+        app_role: "client",
+        created_via: "firebase_google",
+      },
+    });
+
+    if (error || !data?.user?.id) {
+      throw new AppError("Could not create your account.", 500, {
+        code: "firebase_user_create_failed",
+        raw: error?.message,
+      });
+    }
+    user = data.user;
+  }
+
+  const { profile, primaryRole } = await upsertUserProfile(user);
+
+  const factor = await getTotpFactor(user.id);
+  const requiresMfa = shouldRequireMfa(primaryRole) || Boolean(factor?.is_active && factor?.is_verified);
+
+  if (requiresMfa) {
+    const ticket = await createLoginTicket({
+      userId: user.id,
+      role: primaryRole,
+      email: user.email,
+      passwordSignInPayload: {
+        provider_user_id: user.id,
+        email,
+        role: primaryRole,
+      },
+    });
+
+    return {
+      mfaRequired: true,
+      code: "mfa_required",
+      ticket,
+      role: primaryRole,
+      methods: [MFA_METHODS.TOTP, MFA_METHODS.EMAIL_OTP],
+    };
+  }
+
+  const session = await createSessionTokens({
+    userId: user.id,
+    email,
+    role: primaryRole,
+    mfaVerified: false,
+    source: "firebase_google",
+  });
+
+  const actor = await buildActorFromUserId(user.id, user.email || null);
+  await auditAdminAuthEvent(req, actor, "admin_login_success", "Google sign-in successful.", {
+    role: primaryRole,
+    provider: identity.provider,
+  });
+
+  return {
+    mfaRequired: false,
+    role: primaryRole,
+    accessToken: session.accessToken,
+    refreshToken: session.refreshToken,
+    expiresAt: session.expiresAt,
+  };
+}
+
 module.exports = {
   registerUser,
   loginWithPassword,
@@ -1692,6 +1778,7 @@ module.exports = {
   changePassword,
   beginSocialLogin,
   exchangeSupabaseSession,
+  loginWithFirebase,
   disableTotp,
   verifyAndLoadSession,
   touchSession,

@@ -31,6 +31,10 @@ const socialLoginSchema = z.object({
   redirectTo: z.string().url().optional(),
 });
 
+const firebaseLoginSchema = z.object({
+  idToken: z.string().min(1, "A Firebase ID token is required."),
+});
+
 const socialExchangeSchema = z.object({
   supabaseAccessToken: z.string().min(10),
 });
@@ -72,6 +76,7 @@ module.exports = {
   loginPasswordSchema,
   socialLoginSchema,
   socialExchangeSchema,
+  firebaseLoginSchema,
   mfaTicketSchema,
   mfaTotpVerifySchema,
   mfaTotpChallengeSchema,

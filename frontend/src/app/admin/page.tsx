@@ -31,6 +31,9 @@ import {
   createAdminCategory,
   updateAdminCategory,
   deleteAdminCategory,
+  createCategoryQuestion,
+  updateCategoryQuestion,
+  deleteCategoryQuestion,
   getExpertPerformance,
   getExpertApplications,
   getFairnessSettings,
@@ -237,6 +240,13 @@ export default function AdminPage() {
     segments: [] as string[],
     supportText: "",
     riskPoints: 4,
+  });
+  // Which category's question editor is open, plus the draft being written.
+  const [questionCategoryId, setQuestionCategoryId] = useState<string>("");
+  const [questionDraft, setQuestionDraft] = useState({
+    text: "",
+    helper: "",
+    answers: ["", "", "", ""],
   });
   const [expertActivity, setExpertActivity] = useState<AdminAuditLogRecord[]>([]);
   const [expertActivityLoading, setExpertActivityLoading] = useState(false);
@@ -2605,6 +2615,142 @@ export default function AdminPage() {
                                     Delete
                                   </Button>
                                 </div>
+                              </div>
+
+                              <div className="mt-3 rounded-xl border border-[#EDF2FB] bg-white p-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <p className="text-xs font-semibold text-[#3D4F6B]">
+                                    Questions ({category.questions?.length || 0})
+                                  </p>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="rounded-lg border-[#D6E1F4] text-xs"
+                                    onClick={() => {
+                                      setQuestionCategoryId(questionCategoryId === category.id ? "" : category.id);
+                                      setQuestionDraft({ text: "", helper: "", answers: ["", "", "", ""] });
+                                    }}
+                                  >
+                                    {questionCategoryId === category.id ? "Close" : "Add question"}
+                                  </Button>
+                                </div>
+
+                                {(category.questions || []).length === 0 ? (
+                                  <p className="mt-2 text-xs text-[#8894AC]">
+                                    No questions yet. Clients who pick this category go straight to urgency, budget and location.
+                                  </p>
+                                ) : (
+                                  <div className="mt-2 space-y-2">
+                                    {(category.questions || []).map((question) => (
+                                      <div key={question.id} className="rounded-lg border border-[#EDF2FB] bg-[#FBFDFF] p-2.5">
+                                        <div className="flex flex-wrap items-start justify-between gap-2">
+                                          <div>
+                                            <p className="text-sm text-[#22314C]">{question.text}</p>
+                                            <p className="mt-0.5 text-xs text-[#8894AC]">
+                                              {question.options.map((option) => option.label).join(" / ")}
+                                            </p>
+                                          </div>
+                                          <div className="flex gap-1.5">
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="rounded-lg border-[#D6E1F4] text-xs"
+                                              onClick={() =>
+                                                runAction(
+                                                  () => updateCategoryQuestion(token, question.id, { isActive: !question.is_active }),
+                                                  question.is_active ? "Question hidden." : "Question shown.",
+                                                ).then(refreshCategories)
+                                              }
+                                            >
+                                              {question.is_active ? "Hide" : "Show"}
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="rounded-lg border-rose-200 text-xs text-rose-600 hover:bg-rose-50"
+                                              onClick={() => {
+                                                if (!window.confirm(`Delete the question "${question.text}"?`)) return;
+                                                void runAction(() => deleteCategoryQuestion(token, question.id), "Question deleted.").then(refreshCategories);
+                                              }}
+                                            >
+                                              Delete
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {questionCategoryId === category.id ? (
+                                  <div className="mt-3 space-y-2 rounded-lg border border-[#E2EAF8] bg-[#FFFDF8] p-3">
+                                    <input
+                                      value={questionDraft.text}
+                                      onChange={(event) => setQuestionDraft((draft) => ({ ...draft, text: event.target.value }))}
+                                      placeholder="Question, e.g. What stage are you at?"
+                                      className="h-10 w-full rounded-lg border border-[#D6E1F4] px-3 text-sm"
+                                    />
+                                    <input
+                                      value={questionDraft.helper}
+                                      onChange={(event) => setQuestionDraft((draft) => ({ ...draft, helper: event.target.value }))}
+                                      placeholder="Helper text (optional)"
+                                      className="h-10 w-full rounded-lg border border-[#D6E1F4] px-3 text-sm"
+                                    />
+                                    <p className="text-xs text-[#8894AC]">Answers (at least two)</p>
+                                    {questionDraft.answers.map((answer, index) => (
+                                      <input
+                                        key={index}
+                                        value={answer}
+                                        onChange={(event) =>
+                                          setQuestionDraft((draft) => ({
+                                            ...draft,
+                                            answers: draft.answers.map((item, position) => (position === index ? event.target.value : item)),
+                                          }))
+                                        }
+                                        placeholder={`Answer ${index + 1}`}
+                                        className="h-9 w-full rounded-lg border border-[#D6E1F4] px-3 text-sm"
+                                      />
+                                    ))}
+                                    <div className="flex gap-2">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="rounded-lg border-[#D6E1F4] text-xs"
+                                        onClick={() => setQuestionDraft((draft) => ({ ...draft, answers: [...draft.answers, ""] }))}
+                                      >
+                                        Add answer
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        className="flex-1 rounded-lg bg-[#2E67E8] text-white hover:bg-[#2759C9]"
+                                        disabled={
+                                          !questionDraft.text.trim() ||
+                                          questionDraft.answers.filter((answer) => answer.trim()).length < 2
+                                        }
+                                        onClick={() =>
+                                          runAction(
+                                            () =>
+                                              createCategoryQuestion(token, category.id, {
+                                                text: questionDraft.text.trim(),
+                                                helper: questionDraft.helper.trim(),
+                                                options: questionDraft.answers
+                                                  .filter((answer) => answer.trim())
+                                                  .map((answer) => ({ label: answer.trim() })),
+                                                sortOrder: (category.questions || []).length * 10,
+                                              }),
+                                            "Question added.",
+                                          ).then(() => {
+                                            setQuestionDraft({ text: "", helper: "", answers: ["", "", "", ""] });
+                                            setQuestionCategoryId("");
+                                            return refreshCategories();
+                                          })
+                                        }
+                                      >
+                                        Save question
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : null}
                               </div>
 
                               {category.children.length > 0 ? (

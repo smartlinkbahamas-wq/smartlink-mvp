@@ -1021,6 +1021,10 @@ function buildDbCategoryPrompts(
 ): QuizPrompt[] {
   const prompts: QuizPrompt[] = [];
 
+  // Questions configured in Settings -> Categories come first; the closing
+  // three (urgency, budget, location) always run because matching needs them.
+  const configured = (category.questions || []).filter((question) => question.is_active);
+
   if (category.children.length > 0) {
     prompts.push({
       id: DB_SUBCATEGORY_PROMPT_ID,
@@ -1030,6 +1034,22 @@ function buildDbCategoryPrompts(
       options: category.children.map(categoryToOption),
     });
   }
+
+  configured.forEach((question) => {
+    prompts.push({
+      id: question.slug,
+      text: question.text,
+      helper: question.helper || "",
+      category: selectedCategory,
+      options: question.options.map((option) => ({
+        id: option.id,
+        label: option.label,
+        text: option.label,
+        support: option.support || option.label,
+        riskPoints: option.riskPoints,
+      })),
+    });
+  });
 
   prompts.push(
     { id: "urgency", text: "How urgent is this for you?", helper: FINAL_QUESTIONS_HELPER, category: selectedCategory, options: urgencyOptions },

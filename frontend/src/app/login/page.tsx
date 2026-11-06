@@ -22,11 +22,16 @@ import {
   registerUser,
   sendEmailOtp,
   signInWithPassword,
-  startSocialLogin,
+  loginWithFirebaseIdToken,
   verifyEmailOtp,
   verifyTotpChallenge,
 } from "@/lib/admin-session";
 import { getMyExpertApplicationStatus } from "@/lib/backend-api";
+import {
+  isDismissedPopupError,
+  signInWithFacebookGetIdToken,
+  signInWithGoogleGetIdToken,
+} from "@/lib/firebase";
 
 type SignupRole = "client" | "expert";
 type AuthMode = "signin" | "signup";
@@ -218,28 +223,57 @@ export default function LoginPage() {
     }
   };
 
+  // Google now goes through Firebase: it proves the Google identity, the
+  // backend verifies the ID token and issues our own session. No redirect, so
+  // the person stays on this page and lands wherever their role belongs.
   const onGoogleLogin = async () => {
     setLoading(true);
     setError("");
     try {
-      const callback = `${window.location.origin}/auth/callback`;
-      const data = await startSocialLogin("google", callback);
-      window.location.href = data.authUrl;
+      const idToken = await signInWithGoogleGetIdToken();
+      const result = await loginWithFirebaseIdToken(idToken);
+
+      if (result.mfaRequired) {
+        setMfaTicket(result.ticket);
+        setMfaMethod(result.methods.includes("totp") ? "totp" : "email_otp");
+        setMessage("MFA required. Complete verification to continue.");
+        setLoading(false);
+        return;
+      }
+
+      await completeLoginRedirect(result.role);
     } catch (socialError) {
-      setError(socialError instanceof Error ? socialError.message : "Failed to start Google login.");
+      if (isDismissedPopupError(socialError)) {
+        setLoading(false);
+        return;
+      }
+      setError(socialError instanceof Error ? socialError.message : "Failed to sign in with Google.");
       setLoading(false);
     }
   };
 
-  const onMicrosoftLogin = async () => {
+  const onFacebookLogin = async () => {
     setLoading(true);
     setError("");
     try {
-      const callback = `${window.location.origin}/auth/callback`;
-      const data = await startSocialLogin("azure", callback);
-      window.location.href = data.authUrl;
+      const idToken = await signInWithFacebookGetIdToken();
+      const result = await loginWithFirebaseIdToken(idToken);
+
+      if (result.mfaRequired) {
+        setMfaTicket(result.ticket);
+        setMfaMethod(result.methods.includes("totp") ? "totp" : "email_otp");
+        setMessage("MFA required. Complete verification to continue.");
+        setLoading(false);
+        return;
+      }
+
+      await completeLoginRedirect(result.role);
     } catch (socialError) {
-      setError(socialError instanceof Error ? socialError.message : "Failed to start Microsoft login.");
+      if (isDismissedPopupError(socialError)) {
+        setLoading(false);
+        return;
+      }
+      setError(socialError instanceof Error ? socialError.message : "Failed to sign in with Facebook.");
       setLoading(false);
     }
   };
@@ -447,12 +481,12 @@ export default function LoginPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={onMicrosoftLogin}
+                    onClick={onFacebookLogin}
                     className="flex h-10 items-center justify-center gap-2 rounded-xl border border-[#d9e3f3] bg-white text-sm font-semibold text-[#334155] transition hover:bg-[#f8faff]"
                     disabled={loading}
                   >
-                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-[4px] bg-[#eef4ff] text-[10px] font-bold text-[#2563eb]">M</span>
-                    Microsoft
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#eef3ff] text-[11px] font-bold text-[#1877F2]">f</span>
+                    Facebook
                   </button>
                 </div>
               </div>

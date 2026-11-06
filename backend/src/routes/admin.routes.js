@@ -46,6 +46,9 @@ const {
   postCategory,
   patchCategory,
   removeCategory,
+  postQuestion,
+  patchQuestion,
+  removeQuestion,
 } = require("../controllers/category.controller");
 
 const adminRouter = express.Router();
@@ -100,6 +103,9 @@ adminRouter.get("/categories", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANA
 adminRouter.post("/categories", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANAGE), asyncHandler(postCategory));
 adminRouter.patch("/categories/:id", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANAGE), asyncHandler(patchCategory));
 adminRouter.delete("/categories/:id", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANAGE), asyncHandler(removeCategory));
+adminRouter.post("/categories/:categoryId/questions", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANAGE), asyncHandler(postQuestion));
+adminRouter.patch("/category-questions/:id", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANAGE), asyncHandler(patchQuestion));
+adminRouter.delete("/category-questions/:id", requirePermission(ADMIN_PERMISSIONS.CATEGORY_MANAGE), asyncHandler(removeQuestion));
 
 adminRouter.get("/experts/:expertId/activity", requirePermission(ADMIN_PERMISSIONS.AUDIT_VIEW), asyncHandler(getExpertActivity));
 
