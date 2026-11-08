@@ -29,6 +29,7 @@
     "mkdirp": "^3.0.1",
     "morgan": "^1.10.1",
     "multer": "^2.2.0",
+    "nodemailer": "^10.4.0",
     "speakeasy": "^2.0.0",
     "zod": "^4.1.12"
   },

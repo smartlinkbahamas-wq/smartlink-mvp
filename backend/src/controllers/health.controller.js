@@ -13,7 +13,15 @@ function getHealth(req, res) { // eslint-disable-line no-unused-vars
   });
 }
 
+// Confirms the SMTP credentials actually work, without sending anything.
+async function getMailHealth(req, res) {
+  const { verifyMailConnection } = require("../services/mail.service");
+  const result = await verifyMailConnection();
+  return res.status(result.ok ? 200 : 503).json({ success: result.ok, data: result });
+}
+
 module.exports = {
   getHealth,
+  getMailHealth,
 };
 

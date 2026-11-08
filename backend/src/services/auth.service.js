@@ -840,6 +840,11 @@ async function registerUser(req, payload) {
     }
   }
 
+  if (actionLink && user?.email) {
+    const { sendVerificationEmail } = require("./mail.service");
+    await sendVerificationEmail({ to: user.email, actionLink });
+  }
+
   return {
     userId: user.id,
     email,
@@ -1030,10 +1035,23 @@ async function sendEmailOtpForTicket(ticketToken) {
     throw new AppError("Failed to create email OTP challenge.", 500, { code: "email_otp_create_failed", raw: error.message });
   }
 
+  const { sendOtpEmail } = require("./mail.service");
+  const delivery = await sendOtpEmail({
+    to: ticket.email,
+    code: otp,
+    expiresMinutes: Number(env.MFA_EMAIL_OTP_TTL_MINUTES || 10),
+  });
+
+  await client
+    .from("mfa_email_challenges")
+    .update({ delivery_state: delivery.sent ? "sent" : "failed" })
+    .eq("id", challenge.id);
+
   return {
     challengeId: challenge.id,
     expiresAt: challenge.expires_at,
-    delivery: env.NODE_ENV === "production" ? "queued" : "development",
+    delivery: delivery.sent ? "sent" : "failed",
+    // Only outside production, so a misconfigured mailer never leaks a code.
     devCode: env.NODE_ENV === "production" ? undefined : otp,
   };
 }
@@ -1506,11 +1524,21 @@ async function resendVerificationEmail(email, redirectUrl = null) {
     });
   } catch (_) {}
 
+  const { sendVerificationEmail, isMailConfigured } = require("./mail.service");
+  let delivered = false;
+  if (actionLink) {
+    const result = await sendVerificationEmail({ to: normalizedEmail, actionLink });
+    delivered = result.sent;
+  }
+
   return {
     success: true,
     alreadyVerified: false,
-    verificationLink: actionLink,
-    emailServiceConfigured: false,
+    // Only hand the raw link back when we could not deliver it, so the UI can
+    // still offer a way through instead of stranding the user.
+    verificationLink: delivered ? null : actionLink,
+    emailServiceConfigured: isMailConfigured(),
+    delivered,
   };
 }
 
