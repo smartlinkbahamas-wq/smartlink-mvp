@@ -1,5 +1,8 @@
 const fs = require("fs");
-const admin = require("firebase-admin");
+// firebase-admin v13 dropped the legacy namespace API, so the modular entry
+// points are the only ones that exist now.
+const { cert, getApp, getApps, initializeApp } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
 
 const { AppError } = require("../utils/app-error");
 
@@ -46,9 +49,9 @@ function getFirebaseApp() {
       );
     }
 
-    app = admin.apps.length
-      ? admin.app()
-      : admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    app = getApps().length
+      ? getApp()
+      : initializeApp({ credential: cert(serviceAccount) });
 
     return app;
   } catch (error) {
@@ -73,7 +76,7 @@ async function verifyFirebaseIdToken(idToken) {
 
   let decoded;
   try {
-    decoded = await firebaseApp.auth().verifyIdToken(idToken, true);
+    decoded = await getAuth(firebaseApp).verifyIdToken(idToken, true);
   } catch (error) {
     throw new AppError("Google sign-in could not be verified. Please try again.", 401, {
       code: "firebase_token_invalid",
