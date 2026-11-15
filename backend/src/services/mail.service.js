@@ -75,32 +75,106 @@ async function verifyMailConnection() {
   }
 }
 
-function layout(title, bodyHtml) {
+// Email clients are not browsers: tables for structure, inline styles only,
+// no flexbox or external CSS. Outlook in particular ignores everything else.
+const BRAND = {
+  navy: "#101B33",
+  blue: "#2E67E8",
+  ink: "#1F2937",
+  muted: "#6B7A94",
+  line: "#E4EBF7",
+  wash: "#F5F8FD",
+};
+
+function layout({ preheader, heading, bodyHtml, footerNote }) {
   return `<!doctype html>
 <html>
-  <body style="margin:0;padding:24px;background:#f4f7fb;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;">
-    <div style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #e3ebf7;border-radius:16px;padding:28px;">
-      <h1 style="margin:0 0 16px;font-size:20px;color:#152540;">${title}</h1>
-      ${bodyHtml}
-      <p style="margin:28px 0 0;font-size:12px;color:#8894ac;">
-        SmartLink Bahamas &middot; If you did not expect this email you can ignore it.
-      </p>
-    </div>
-  </body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>${heading}</title>
+</head>
+<body style="margin:0;padding:0;background:${BRAND.wash};">
+  <!-- Shown as the inbox snippet, then hidden in the body. -->
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${preheader}</div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.wash};padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 2px 14px rgba(21,37,64,0.07);">
+
+          <tr>
+            <td style="background:${BRAND.navy};padding:22px 28px;">
+              <span style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;color:#ffffff;letter-spacing:-0.2px;">
+                SmartLink<span style="color:#49B6E8;">Bahamas</span>
+              </span>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:32px 28px 28px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+              <h1 style="margin:0 0 14px;font-size:21px;line-height:28px;font-weight:700;color:${BRAND.navy};">${heading}</h1>
+              ${bodyHtml}
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:0 28px;">
+              <div style="height:1px;background:${BRAND.line};"></div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:18px 28px 26px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+              <p style="margin:0;font-size:12px;line-height:19px;color:${BRAND.muted};">
+                ${footerNote}
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+        <p style="margin:18px 0 0;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:11px;color:#9AA7BD;">
+          &copy; ${new Date().getFullYear()} SmartLink Bahamas &middot; Nassau, The Bahamas
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
 </html>`;
 }
 
 async function sendOtpEmail({ to, code, expiresMinutes }) {
+  const digits = String(code)
+    .split("")
+    .map(
+      (d) => `<td align="center" style="padding:0 3px;">
+        <div style="width:44px;height:54px;line-height:54px;background:${BRAND.wash};border:1px solid ${BRAND.line};border-radius:10px;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:24px;font-weight:700;color:${BRAND.navy};">${d}</div>
+      </td>`,
+    )
+    .join("");
+
   return sendMail({
     to,
-    subject: `${code} is your SmartLink Bahamas verification code`,
-    text: `Your verification code is ${code}. It expires in ${expiresMinutes} minutes.`,
-    html: layout(
-      "Your verification code",
-      `<p style="margin:0 0 20px;font-size:14px;line-height:22px;">Enter this code to finish signing in.</p>
-       <p style="margin:0 0 20px;font-size:32px;font-weight:700;letter-spacing:6px;color:#2E67E8;">${code}</p>
-       <p style="margin:0;font-size:13px;color:#5c6f8d;">This code expires in ${expiresMinutes} minutes.</p>`,
-    ),
+    subject: `${code} is your SmartLink Bahamas sign-in code`,
+    text: `Your sign-in code is ${code}. It expires in ${expiresMinutes} minutes. If you did not try to sign in, ignore this email.`,
+    html: layout({
+      preheader: `Your sign-in code is ${code} — expires in ${expiresMinutes} minutes.`,
+      heading: "Your sign-in code",
+      bodyHtml: `
+        <p style="margin:0 0 22px;font-size:15px;line-height:23px;color:${BRAND.ink};">
+          Enter this code to finish signing in. It expires in <strong>${expiresMinutes} minutes</strong>.
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 22px;">
+          <tr>${digits}</tr>
+        </table>
+        <p style="margin:0;font-size:13px;line-height:20px;color:${BRAND.muted};">
+          Never share this code. SmartLink Bahamas will never ask you for it.
+        </p>`,
+      footerNote:
+        "If you did not try to sign in, you can safely ignore this email and your account stays protected.",
+    }),
   });
 }
 
@@ -108,15 +182,30 @@ async function sendVerificationEmail({ to, actionLink }) {
   return sendMail({
     to,
     subject: "Confirm your SmartLink Bahamas account",
-    text: `Confirm your email address: ${actionLink}`,
-    html: layout(
-      "Confirm your email",
-      `<p style="margin:0 0 20px;font-size:14px;line-height:22px;">Tap the button below to confirm your email address and activate your account.</p>
-       <p style="margin:0 0 24px;">
-         <a href="${actionLink}" style="display:inline-block;background:#2E67E8;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:12px;font-size:14px;font-weight:600;">Confirm email</a>
-       </p>
-       <p style="margin:0;font-size:12px;color:#8894ac;word-break:break-all;">Or paste this link into your browser:<br>${actionLink}</p>`,
-    ),
+    text: `Confirm your email address to activate your account: ${actionLink}`,
+    html: layout({
+      preheader: "One tap to activate your SmartLink Bahamas account.",
+      heading: "Confirm your email",
+      bodyHtml: `
+        <p style="margin:0 0 24px;font-size:15px;line-height:23px;color:${BRAND.ink};">
+          You're one step away. Confirm your email address to activate your account and get matched with the right expert.
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
+          <tr>
+            <td style="border-radius:12px;background:${BRAND.blue};">
+              <a href="${actionLink}" style="display:inline-block;padding:13px 26px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:12px;">
+                Confirm my email
+              </a>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:0 0 6px;font-size:12px;color:${BRAND.muted};">Or paste this link into your browser:</p>
+        <p style="margin:0;font-size:12px;line-height:18px;word-break:break-all;">
+          <a href="${actionLink}" style="color:${BRAND.blue};text-decoration:none;">${actionLink}</a>
+        </p>`,
+      footerNote:
+        "This link expires for your security. If you did not create a SmartLink Bahamas account, you can ignore this email.",
+    }),
   });
 }
 

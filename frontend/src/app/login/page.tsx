@@ -20,11 +20,8 @@ import { Button } from "@/components/ui/button";
 import {
   getAdminAccessToken,
   registerUser,
-  sendEmailOtp,
   signInWithPassword,
   loginWithFirebaseIdToken,
-  verifyEmailOtp,
-  verifyTotpChallenge,
 } from "@/lib/admin-session";
 import { getMyExpertApplicationStatus } from "@/lib/backend-api";
 import {
@@ -32,10 +29,10 @@ import {
   signInWithFacebookGetIdToken,
   signInWithGoogleGetIdToken,
 } from "@/lib/firebase";
+import { stashMfaChallenge } from "@/lib/post-login";
 
 type SignupRole = "client" | "expert";
 type AuthMode = "signin" | "signup";
-type MfaMethod = "totp" | "email_otp";
 
 function getErrorCode(error: unknown) {
   if (!error || typeof error !== "object") return "";
@@ -92,10 +89,6 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const [mfaTicket, setMfaTicket] = useState("");
-  const [mfaMethod, setMfaMethod] = useState<MfaMethod>("totp");
-  const [mfaCode, setMfaCode] = useState("");
-  const [devOtpHint, setDevOtpHint] = useState("");
 
   const hcaptchaSiteKey = process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY || "";
   const requireEmailVerification = process.env.NEXT_PUBLIC_EMAIL_VERIFICATION_REQUIRED !== "false";
@@ -114,8 +107,6 @@ export default function LoginPage() {
   const resetAuthState = () => {
     setError("");
     setMessage("");
-    setMfaTicket("");
-    setMfaCode("");
     setCaptchaRequired(false);
     setCaptchaToken("");
   };
@@ -135,6 +126,15 @@ export default function LoginPage() {
     } catch {
       return "/expert-application-status";
     }
+  };
+
+  const goToMfa = (result: { ticket: string; methods: string[] }) => {
+    stashMfaChallenge({
+      ticket: result.ticket,
+      methods: result.methods || [],
+      email: email.trim(),
+    });
+    router.push("/auth/mfa");
   };
 
   const completeLoginRedirect = async (resolvedRole?: string) => {
@@ -173,9 +173,7 @@ export default function LoginPage() {
 
         const result = await signInWithPassword(email.trim(), password);
         if (result.mfaRequired) {
-          setMfaTicket(result.ticket);
-          setMfaMethod(result.methods.includes("totp") ? "totp" : "email_otp");
-          setMessage("MFA required. Complete verification to continue.");
+          goToMfa(result);
         } else {
           await completeLoginRedirect(result.role);
         }
@@ -190,9 +188,7 @@ export default function LoginPage() {
       );
 
       if (result.mfaRequired) {
-        setMfaTicket(result.ticket);
-        setMfaMethod(result.methods.includes("totp") ? "totp" : "email_otp");
-        setMessage("MFA required. Complete verification to continue.");
+        goToMfa(result);
       } else {
         await completeLoginRedirect(result.role);
       }
@@ -217,44 +213,6 @@ export default function LoginPage() {
     }
   };
 
-  const onSendEmailOtp = async () => {
-    if (!mfaTicket) return;
-    setLoading(true);
-    setError("");
-    setMessage("");
-
-    try {
-      const response = await sendEmailOtp(mfaTicket);
-      if (response.devCode) setDevOtpHint(response.devCode);
-      setMessage("Email OTP sent. Check inbox and continue.");
-    } catch (otpError) {
-      setError(otpError instanceof Error ? otpError.message : "Failed to send OTP.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onVerifyMfa = async () => {
-    if (!mfaTicket || !mfaCode) return;
-    setLoading(true);
-    setError("");
-    setMessage("");
-
-    try {
-      if (mfaMethod === "totp") {
-        const response = await verifyTotpChallenge(mfaTicket, mfaCode.trim());
-        await completeLoginRedirect(response.role);
-      } else {
-        const response = await verifyEmailOtp(mfaTicket, mfaCode.trim());
-        await completeLoginRedirect(response.role);
-      }
-    } catch (verifyError) {
-      setError(verifyError instanceof Error ? verifyError.message : "Failed to verify MFA.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Google now goes through Firebase: it proves the Google identity, the
   // backend verifies the ID token and issues our own session. No redirect, so
   // the person stays on this page and lands wherever their role belongs.
@@ -266,10 +224,7 @@ export default function LoginPage() {
       const result = await loginWithFirebaseIdToken(idToken);
 
       if (result.mfaRequired) {
-        setMfaTicket(result.ticket);
-        setMfaMethod(result.methods.includes("totp") ? "totp" : "email_otp");
-        setMessage("MFA required. Complete verification to continue.");
-        setLoading(false);
+        goToMfa(result);
         return;
       }
 
@@ -292,10 +247,7 @@ export default function LoginPage() {
       const result = await loginWithFirebaseIdToken(idToken);
 
       if (result.mfaRequired) {
-        setMfaTicket(result.ticket);
-        setMfaMethod(result.methods.includes("totp") ? "totp" : "email_otp");
-        setMessage("MFA required. Complete verification to continue.");
-        setLoading(false);
+        goToMfa(result);
         return;
       }
 
@@ -470,7 +422,7 @@ export default function LoginPage() {
               {mode === "signup" ? <p className="mt-1 text-xs text-[#64748b]">Use 8-12 chars with uppercase, lowercase, and number.</p> : null}
             </div>
 
-            {mode === "signin" && captchaRequired && !mfaTicket ? (
+            {mode === "signin" && captchaRequired ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
                 <label className="mb-1.5 block text-[0.82rem] font-semibold text-amber-900">hCaptcha token required</label>
                 <input
@@ -498,7 +450,7 @@ export default function LoginPage() {
               {loading ? "Please wait..." : mode === "signin" ? "Sign In" : "Create Account"}
             </Button>
 
-            {mode === "signin" && !mfaTicket ? (
+            {mode === "signin" ? (
               <div className="space-y-2 pt-1">
                 <p className="text-center text-xs text-[#6b7c96]">or continue with social login</p>
                 <div className="grid grid-cols-2 gap-2">
@@ -524,65 +476,6 @@ export default function LoginPage() {
               </div>
             ) : null}
           </form>
-
-          {mfaTicket ? (
-            <div className="mt-6 rounded-2xl border border-[#d9e3f3] bg-[#f8fbff] p-4">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-[#1d4ed8]" />
-                <h3 className="text-sm font-semibold text-[#1f2937]">Multi-Factor Verification</h3>
-              </div>
-
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-semibold">
-                <button
-                  type="button"
-                  onClick={() => setMfaMethod("totp")}
-                  className={`rounded-xl px-3 py-2 ${mfaMethod === "totp" ? "bg-white text-[#1e3a8a] shadow-sm" : "text-[#64748b]"}`}
-                >
-                  Authenticator App
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMfaMethod("email_otp")}
-                  className={`rounded-xl px-3 py-2 ${mfaMethod === "email_otp" ? "bg-white text-[#1e3a8a] shadow-sm" : "text-[#64748b]"}`}
-                >
-                  Email OTP
-                </button>
-              </div>
-
-              {mfaMethod === "email_otp" ? (
-                <div className="mt-3">
-                  <button
-                    type="button"
-                    onClick={onSendEmailOtp}
-                    className="rounded-xl border border-[#cbd5e1] px-3 py-2 text-xs font-semibold text-[#334155] hover:bg-white"
-                    disabled={loading}
-                  >
-                    Send OTP
-                  </button>
-                  {devOtpHint ? <p className="mt-2 rounded-lg bg-amber-50 px-2 py-1 text-xs text-amber-700">Dev OTP: {devOtpHint}</p> : null}
-                </div>
-              ) : null}
-
-              <div className="mt-3">
-                <input
-                  type="text"
-                  value={mfaCode}
-                  onChange={(event) => setMfaCode(event.target.value)}
-                  placeholder={mfaMethod === "totp" ? "Enter 6-digit authenticator code" : "Enter email OTP"}
-                  className="h-10 w-full rounded-xl border border-[#d9e3f3] bg-white px-3 text-sm"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={onVerifyMfa}
-                className="mt-3 h-10 w-full rounded-xl bg-[linear-gradient(145deg,#2563eb,#4f46e5)] text-sm font-semibold text-white hover:brightness-105"
-                disabled={loading || !mfaCode}
-              >
-                Verify and Continue
-              </button>
-            </div>
-          ) : null}
 
           {mode === "signin" && requireEmailVerification ? (
             <p className="mt-6 text-center text-sm text-[#5d6b85]">

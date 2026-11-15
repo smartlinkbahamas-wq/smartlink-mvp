@@ -424,6 +424,13 @@ async function auditAdminAuthEvent(req, actor, actionType, notes, newValue = nul
   });
 }
 
+function availableMfaMethods(factor) {
+  const methods = [];
+  if (factor?.is_active && factor?.is_verified) methods.push(MFA_METHODS.TOTP);
+  methods.push(MFA_METHODS.EMAIL_OTP);
+  return methods;
+}
+
 function shouldRequireMfa(role) {
   return MFA_REQUIRED_ROLES.has(role);
 }
@@ -974,7 +981,7 @@ async function loginWithPassword(req, payload) {
 
     await auditAdminAuthEvent(req, actor, "admin_login_mfa_required", "Password verified. MFA required.", {
       role,
-      methods: [MFA_METHODS.TOTP, MFA_METHODS.EMAIL_OTP],
+      methods: availableMfaMethods(factor),
     });
 
     return {
@@ -982,7 +989,7 @@ async function loginWithPassword(req, payload) {
       code: "mfa_required",
       ticket,
       role,
-      methods: [MFA_METHODS.TOTP, MFA_METHODS.EMAIL_OTP],
+      methods: availableMfaMethods(factor),
     };
   }
 
@@ -1658,7 +1665,7 @@ async function exchangeSupabaseSession(req, payload) {
       code: "mfa_required",
       ticket,
       role: primaryRole,
-      methods: [MFA_METHODS.TOTP, MFA_METHODS.EMAIL_OTP],
+      methods: availableMfaMethods(factor),
     };
   }
 
@@ -1763,7 +1770,7 @@ async function loginWithFirebase(req, payload) {
       code: "mfa_required",
       ticket,
       role: primaryRole,
-      methods: [MFA_METHODS.TOTP, MFA_METHODS.EMAIL_OTP],
+      methods: availableMfaMethods(factor),
     };
   }
 
@@ -1812,6 +1819,7 @@ module.exports = {
   touchSession,
   buildActorFromUserId,
   shouldRequireMfa,
+  availableMfaMethods,
   savePasswordHistory,
   deleteOldPasswordHistory,
 };
