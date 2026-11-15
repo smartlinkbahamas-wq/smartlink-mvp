@@ -203,6 +203,9 @@ export type ResendVerificationResult = {
   message?: string;
   verificationLink?: string;
   emailServiceConfigured?: boolean;
+  // True when the verification mail actually left the server. The page only
+  // falls back to showing the raw link when this is false.
+  delivered?: boolean;
 };
 
 export async function resendVerification(email: string, redirectUrl?: string) {
