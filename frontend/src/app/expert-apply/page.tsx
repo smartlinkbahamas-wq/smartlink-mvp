@@ -17,6 +17,7 @@ import {
   Sparkles,
   Upload,
   UserRound,
+  X,
   Zap,
 } from "lucide-react";
 
@@ -25,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { getAdminAccessToken, getSessionMe, clearAdminSession } from "@/lib/admin-session";
 import { getMyExpertApplicationStatus, getSpecializationOptions, submitExpertApplicationToBackend, uploadExpertDocumentToBackend } from "@/lib/backend-api";
 import { canUseExpertSection } from "@/lib/role-guard";
+import { attachmentUrl } from "@/lib/file-url";
 
 const EXPERT_DRAFT_STORAGE_KEY = "smartlink:expert-application-draft";
 
@@ -60,11 +62,13 @@ interface ExpertApplicationDraft {
   availabilityStatus: string;
   maxClientsPerWeek: string;
   preferredWorkTypes: string;
+  // false before anything is uploaded, one path for single-document fields,
+  // and a list for the fields that accept more than one.
   governmentIdUploaded: boolean | string;
   professionalHeadshotUploaded: boolean | string;
-  referenceContactsReady: boolean | string;
+  referenceContactsReady: boolean | string | string[];
   businessLicenseAttached: boolean | string;
-  certificationsProvided: boolean | string;
+  certificationsProvided: boolean | string | string[];
 }
 
 const defaultDraft: ExpertApplicationDraft = {
@@ -87,13 +91,19 @@ const defaultDraft: ExpertApplicationDraft = {
   certificationsProvided: false,
 };
 
-const uploadFields: { label: string; key: ExpertDraftBooleanField; hint: string }[] = [
+const uploadFields: { label: string; key: ExpertDraftBooleanField; hint: string; multiple?: boolean }[] = [
   { label: "Government ID", key: "governmentIdUploaded", hint: "Passport, driver's license, or national ID" },
   { label: "Professional Headshot", key: "professionalHeadshotUploaded", hint: "Clear, professional photo" },
   { label: "Business License", key: "businessLicenseAttached", hint: "Current approved license" },
-  { label: "Certifications", key: "certificationsProvided", hint: "Relevant industry certifications" },
-  { label: "References", key: "referenceContactsReady", hint: "2–3 professional contacts ready to verify" },
+  { label: "Certifications", key: "certificationsProvided", hint: "Relevant industry certifications — add as many as you hold", multiple: true },
+  { label: "References", key: "referenceContactsReady", hint: "2–3 professional contacts ready to verify", multiple: true },
 ];
+
+// Reads a draft field as a list, whatever shape it is in.
+const draftFiles = (value: boolean | string | string[]): string[] => {
+  if (Array.isArray(value)) return value;
+  return typeof value === "string" && value ? [value] : [];
+};
 
 const profileFieldKeys: (keyof ExpertApplicationDraft)[] = [
   "fullName", "professionalTitle", "businessName", "workEmail",
@@ -112,8 +122,10 @@ function calcStrength(draft: ExpertApplicationDraft) {
   return Math.round((textFilled / profileFieldKeys.length) * 65 + (docsFilled / uploadFields.length) * 35);
 }
 
-function getChecklistStatus(filled: boolean | string): { label: string; color: string; dot: string } {
-  if (filled) return { label: "Completed", color: "text-[#16A34A]", dot: "bg-[#16A34A]" };
+function getChecklistStatus(filled: boolean | string | string[]): { label: string; color: string; dot: string } {
+  // An empty array is truthy, so count the files rather than test the value.
+  const done = Array.isArray(filled) ? filled.length > 0 : Boolean(filled);
+  if (done) return { label: "Completed", color: "text-[#16A34A]", dot: "bg-[#16A34A]" };
   return { label: "Missing", color: "text-[#9CA3AF]", dot: "bg-[#D1D5DB]" };
 }
 
@@ -268,23 +280,49 @@ function ExpertApplyContent() {
     }
   };
 
-  const handleFileUpload = async (key: ExpertDraftBooleanField, file: File | null) => {
-    if (!file) return;
+  const handleFileUpload = async (
+    key: ExpertDraftBooleanField,
+    files: FileList | null,
+    multiple = false,
+  ) => {
+    const chosen = Array.from(files || []);
+    if (chosen.length === 0) return;
+
     const token = getAdminAccessToken();
     if (!token) {
       setSubmitError("Session expired. Please login to upload files.");
       return;
     }
-    
-    setUploadingFiles(prev => ({ ...prev, [key]: true }));
+
+    setUploadingFiles((prev) => ({ ...prev, [key]: true }));
+    setSubmitError(null);
+
+    // Uploaded one at a time: the endpoint takes a single document, and a
+    // partial failure then still keeps whatever already went up.
+    const uploaded: string[] = [];
     try {
-      const response = await uploadExpertDocumentToBackend(file, token);
-      setDraft((prev) => ({ ...prev, [key]: response.data.fileUrl }));
+      for (const file of multiple ? chosen : chosen.slice(0, 1)) {
+        const response = await uploadExpertDocumentToBackend(file, token);
+        uploaded.push(response.data.fileUrl);
+      }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Failed to upload file.");
     } finally {
-      setUploadingFiles(prev => ({ ...prev, [key]: false }));
+      if (uploaded.length > 0) {
+        setDraft((prev) => ({
+          ...prev,
+          [key]: multiple ? [...draftFiles(prev[key]), ...uploaded] : uploaded[0],
+        }));
+      }
+      setUploadingFiles((prev) => ({ ...prev, [key]: false }));
     }
+  };
+
+  const handleRemoveFile = (key: ExpertDraftBooleanField, path: string) => {
+    setDraft((prev) => {
+      const remaining = draftFiles(prev[key]).filter((item) => item !== path);
+      return { ...prev, [key]: remaining.length > 0 ? remaining : false };
+    });
   };
 
   const saveDraft = () => {
@@ -567,34 +605,80 @@ function ExpertApplyContent() {
                   </p>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {uploadFields.map(({ label, key, hint }) => (
-                    <label
-                      key={key}
-                      className={`relative flex cursor-pointer flex-col gap-2 rounded-xl border p-4 text-left transition ${
-                        draft[key]
-                          ? "border-[#BBF7D0] bg-[#F0FDF4]"
-                          : "border-dashed border-[#C8D6EE] bg-white hover:border-[#356AF6]/50"
-                      } ${uploadingFiles[key] ? "opacity-50 pointer-events-none" : ""}`}
-                    >
-                      <input
-                        type="file"
-                        className="hidden"
-                        onChange={(e) => handleFileUpload(key, e.target.files?.[0] || null)}
-                        disabled={uploadingFiles[key]}
-                      />
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={`text-sm font-semibold ${draft[key] ? "text-[#15803D]" : "text-[#111827]"}`}>{label}</span>
-                        {draft[key]
-                          ? <CheckCircle2 className="h-4 w-4 shrink-0 text-[#16A34A]" />
-                          : <Upload className="h-4 w-4 shrink-0 text-[#A0AECB]" />
-                        }
+                  {uploadFields.map(({ label, key, hint, multiple }) => {
+                    const files = draftFiles(draft[key]);
+                    const hasFiles = files.length > 0;
+                    return (
+                      <div key={key} className="flex flex-col gap-2">
+                        <label
+                          className={`relative flex cursor-pointer flex-col gap-2 rounded-xl border p-4 text-left transition ${
+                            hasFiles
+                              ? "border-[#BBF7D0] bg-[#F0FDF4]"
+                              : "border-dashed border-[#C8D6EE] bg-white hover:border-[#356AF6]/50"
+                          } ${uploadingFiles[key] ? "opacity-50 pointer-events-none" : ""}`}
+                        >
+                          <input
+                            type="file"
+                            multiple={multiple}
+                            className="hidden"
+                            onChange={(event) => {
+                              void handleFileUpload(key, event.target.files, multiple);
+                              // Clearing it lets the same file be chosen again
+                              // after it has been removed from the list.
+                              event.target.value = "";
+                            }}
+                            disabled={uploadingFiles[key]}
+                          />
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={`text-sm font-semibold ${hasFiles ? "text-[#15803D]" : "text-[#111827]"}`}>{label}</span>
+                            {hasFiles
+                              ? <CheckCircle2 className="h-4 w-4 shrink-0 text-[#16A34A]" />
+                              : <Upload className="h-4 w-4 shrink-0 text-[#A0AECB]" />
+                            }
+                          </div>
+                          <p className="text-[0.7rem] text-[#9CA3AF]">{hint}</p>
+                          <span className={`mt-1 inline-flex self-start rounded-full px-2.5 py-0.5 text-xs font-semibold ${hasFiles ? "bg-[#DCFCE7] text-[#15803D]" : "bg-[#EEF3FF] text-[#356AF6]"}`}>
+                            {uploadingFiles[key]
+                              ? "Uploading..."
+                              : !hasFiles
+                                ? "Upload"
+                                : multiple
+                                  ? `${files.length} uploaded — add more`
+                                  : "Uploaded ✓"}
+                          </span>
+                        </label>
+
+                        {hasFiles ? (
+                          <ul className="space-y-1">
+                            {files.map((file) => (
+                              <li
+                                key={file}
+                                className="flex items-center justify-between gap-2 rounded-lg border border-[#E2EAF8] bg-white px-2.5 py-1.5"
+                              >
+                                <a
+                                  href={attachmentUrl(file)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="truncate text-[0.7rem] font-medium text-[#356AF6] hover:underline"
+                                  title={file.split("/").pop() || file}
+                                >
+                                  {file.split("/").pop()}
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveFile(key, file)}
+                                  aria-label={`Remove ${label} file`}
+                                  className="shrink-0 rounded p-0.5 text-[#9CA3AF] transition hover:bg-[#FEE2E2] hover:text-[#DC2626]"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
                       </div>
-                      <p className="text-[0.7rem] text-[#9CA3AF]">{hint}</p>
-                      <span className={`mt-1 inline-flex self-start rounded-full px-2.5 py-0.5 text-xs font-semibold ${draft[key] ? "bg-[#DCFCE7] text-[#15803D]" : "bg-[#EEF3FF] text-[#356AF6]"}`}>
-                        {uploadingFiles[key] ? "Uploading..." : draft[key] ? "Uploaded ✓" : "Upload"}
-                      </span>
-                    </label>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
                   <p className="text-xs font-medium text-amber-800">

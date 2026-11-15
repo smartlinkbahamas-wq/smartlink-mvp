@@ -66,6 +66,7 @@ import {
 } from "@/lib/admin-api";
 import { clearAdminSession, getAdminAccessToken, logoutCurrentSession } from "@/lib/admin-session";
 import { canAccessAdminArea } from "@/lib/role-guard";
+import { attachmentPaths, attachmentUrl, isImagePath } from "@/lib/file-url";
 import type {
   ServiceCategory,
   AdminAuditLogRecord,
@@ -1345,21 +1346,40 @@ export default function AdminPage() {
                                             </div>
                                           );
                                         }
-                                        if (typeof value === "string" && value.startsWith("/uploads/")) {
-                                          const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+                                        const files = attachmentPaths(value);
+                                        if (files.length > 0) {
                                           return (
                                             <div key={key}>
-                                              <span className="text-[#60728E] block text-xs font-medium mb-1">{fieldLabel(key)}</span>
-                                              {isImage ? (
-                                                <a href={`http://localhost:5000${value}`} target="_blank" rel="noreferrer" className="block mt-2">
-                                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                  <img src={`http://localhost:5000${value}`} alt={key} className="max-w-full h-auto max-h-32 object-contain rounded-md border border-[#E2EAF8] shadow-sm bg-white" />
-                                                </a>
-                                              ) : (
-                                                <a href={`http://localhost:5000${value}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-blue-600 hover:text-blue-800 transition">
-                                                  View Document <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                                                </a>
-                                              )}
+                                              <span className="text-[#60728E] block text-xs font-medium mb-1">
+                                                {fieldLabel(key)}
+                                                {files.length > 1 ? ` (${files.length})` : ""}
+                                              </span>
+                                              <div className="mt-2 flex flex-wrap gap-2">
+                                                {files.map((file, index) => (
+                                                  <a
+                                                    key={file}
+                                                    href={attachmentUrl(file)}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    title={file.split("/").pop() || ""}
+                                                    className="block"
+                                                  >
+                                                    {isImagePath(file) ? (
+                                                      /* eslint-disable-next-line @next/next/no-img-element */
+                                                      <img
+                                                        src={attachmentUrl(file)}
+                                                        alt={`${fieldLabel(key)} ${index + 1}`}
+                                                        className="h-32 w-auto max-w-full rounded-md border border-[#E2EAF8] bg-white object-contain shadow-sm"
+                                                      />
+                                                    ) : (
+                                                      <span className="inline-flex items-center gap-1 rounded-md border border-[#E2EAF8] bg-white px-2.5 py-1.5 font-medium text-blue-600 transition hover:text-blue-800">
+                                                        View Document{files.length > 1 ? ` ${index + 1}` : ""}
+                                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                                                      </span>
+                                                    )}
+                                                  </a>
+                                                ))}
+                                              </div>
                                             </div>
                                           );
                                         }

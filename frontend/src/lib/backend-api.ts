@@ -271,9 +271,11 @@ export async function submitExpertApplicationToBackend(
     preferredWorkTypes: string;
     governmentIdUploaded: boolean | string;
     professionalHeadshotUploaded: boolean | string;
-    referenceContactsReady: boolean | string;
+    // Certifications and references accept several documents, so they may
+    // arrive as a list of paths.
+    referenceContactsReady: boolean | string | string[];
     businessLicenseAttached: boolean | string;
-    certificationsProvided: boolean | string;
+    certificationsProvided: boolean | string | string[];
   },
   token: string,
 ) {

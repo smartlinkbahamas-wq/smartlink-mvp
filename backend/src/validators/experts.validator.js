@@ -19,11 +19,13 @@ const expertApplicationSubmitSchema = z.object({
   availabilityStatus: z.string().trim().min(2),
   maxClientsPerWeek: z.string().trim().optional().default(""),
   preferredWorkTypes: z.string().trim().optional().default(""),
-  governmentIdUploaded: z.union([z.boolean(), z.string()]).default(false),
-  professionalHeadshotUploaded: z.union([z.boolean(), z.string()]).default(false),
-  referenceContactsReady: z.union([z.boolean(), z.string()]).default(false),
-  businessLicenseAttached: z.union([z.boolean(), z.string()]).default(false),
-  certificationsProvided: z.union([z.boolean(), z.string()]).default(false),
+  // Three shapes, by history: a legacy boolean, a single uploaded path, or
+  // several paths for the fields that accept more than one document.
+  governmentIdUploaded: z.union([z.boolean(), z.string(), z.array(z.string())]).default(false),
+  professionalHeadshotUploaded: z.union([z.boolean(), z.string(), z.array(z.string())]).default(false),
+  referenceContactsReady: z.union([z.boolean(), z.string(), z.array(z.string())]).default(false),
+  businessLicenseAttached: z.union([z.boolean(), z.string(), z.array(z.string())]).default(false),
+  certificationsProvided: z.union([z.boolean(), z.string(), z.array(z.string())]).default(false),
 });
 
 module.exports = {
