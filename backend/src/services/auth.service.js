@@ -431,6 +431,29 @@ function availableMfaMethods(factor) {
   return methods;
 }
 
+// Supabase only honours `redirect_to` when the URL is on the dashboard's
+// Redirect URLs allowlist. Otherwise it silently substitutes the project's
+// Site URL, and the confirmation link lands the user somewhere else entirely
+// (classically http://localhost:3000 on a production sign-up). Nothing in the
+// API response says this happened, so check the link we were handed and say so.
+function warnIfRedirectWasOverridden(actionLink, requestedRedirect) {
+  if (!actionLink || !requestedRedirect) return;
+  try {
+    const applied = new URL(actionLink).searchParams.get("redirect_to");
+    if (!applied) return;
+    const sameTarget =
+      new URL(applied).origin === new URL(requestedRedirect).origin;
+    if (!sameTarget) {
+      console.error(
+        `[auth] Supabase ignored redirect_to=${requestedRedirect} and used ${applied}. ` +
+          "Add the site URL to Authentication > URL Configuration > Redirect URLs.",
+      );
+    }
+  } catch (_) {
+    // A malformed link is not worth failing the sign-up over.
+  }
+}
+
 function shouldRequireMfa(role) {
   return MFA_REQUIRED_ROLES.has(role);
 }
@@ -845,6 +868,8 @@ async function registerUser(req, payload) {
         }
       } catch (_) {}
     }
+
+    warnIfRedirectWasOverridden(actionLink, origin);
   }
 
   if (actionLink && user?.email) {
@@ -1520,6 +1545,8 @@ async function resendVerificationEmail(email, redirectUrl = null) {
       }
     } catch (_) {}
   }
+
+  warnIfRedirectWasOverridden(actionLink, targetRedirect);
 
   try {
     await supabaseAuthRequest("/resend", {
