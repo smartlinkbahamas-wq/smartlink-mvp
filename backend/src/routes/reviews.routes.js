@@ -5,10 +5,21 @@ const { patchReviewModerationByAdmin } = require("../controllers/admin.controlle
 const { ADMIN_PERMISSIONS } = require("../constants/admin-rbac");
 const { requireAdminAuth, requirePermission } = require("../middleware/admin-jwt-auth");
 const { asyncHandler } = require("../utils/async-handler");
+const { createFixedWindowLimiter } = require("../middleware/public-rate-limit");
+const { env } = require("../config/env");
+
+// Unauthenticated and writes rows, so it gets a per-IP ceiling.
+const publicWriteLimit = createFixedWindowLimiter({
+  name: "reviews",
+  windowMinutes: env.PUBLIC_RATE_LIMIT_WINDOW_MINUTES,
+  max: env.PUBLIC_RATE_LIMIT_MAX,
+  message: "Too many submissions from this network. Please try again later.",
+});
+
 
 const reviewsRouter = express.Router();
 
-reviewsRouter.post("/public", asyncHandler(submitPublicReview));
+reviewsRouter.post("/public", publicWriteLimit, asyncHandler(submitPublicReview));
 reviewsRouter.patch(
   "/:id/moderate",
   requireAdminAuth,

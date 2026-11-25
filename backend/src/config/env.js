@@ -34,6 +34,11 @@ const env = {
   STANDARD_SESSION_TTL_DAYS: toNumber(process.env.STANDARD_SESSION_TTL_DAYS, 30),
   AUTH_RATE_LIMIT_WINDOW_MINUTES: toNumber(process.env.AUTH_RATE_LIMIT_WINDOW_MINUTES, 15),
   AUTH_RATE_LIMIT_MAX_ATTEMPTS: toNumber(process.env.AUTH_RATE_LIMIT_MAX_ATTEMPTS, 10),
+  // Abuse controls for the unauthenticated public endpoints (leads, matches,
+  // introductions, reviews, feedback), which previously had none at all.
+  PUBLIC_RATE_LIMIT_WINDOW_MINUTES: toNumber(process.env.PUBLIC_RATE_LIMIT_WINDOW_MINUTES, 60),
+  PUBLIC_RATE_LIMIT_MAX: toNumber(process.env.PUBLIC_RATE_LIMIT_MAX, 10),
+  PUBLIC_READ_RATE_LIMIT_MAX: toNumber(process.env.PUBLIC_READ_RATE_LIMIT_MAX, 60),
   AUTH_LOCK_THRESHOLD: toNumber(process.env.AUTH_LOCK_THRESHOLD, 5),
   AUTH_LOCK_MINUTES: toNumber(process.env.AUTH_LOCK_MINUTES, 15),
   AUTH_SUSPICIOUS_THRESHOLD: toNumber(process.env.AUTH_SUSPICIOUS_THRESHOLD, 3),
