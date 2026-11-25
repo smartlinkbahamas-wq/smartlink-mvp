@@ -374,3 +374,84 @@ export async function getSpecializationOptions(): Promise<string[]> {
   const parsed = (await response.json()) as { success: boolean; data: string[] };
   return parsed.data || [];
 }
+
+// ---------------------------------------------------------------------------
+// Lead trust: customer email verification, suspicious lead reporting, and
+// per-provider notification preferences. Backed by /api/trust.
+// ---------------------------------------------------------------------------
+
+/**
+ * The five reasons are fixed server-side in lead-trust.service.js. They are
+ * mirrored here rather than fetched because the labels are copy, not data, and
+ * a mismatch fails loudly in the type checker instead of silently at runtime.
+ */
+export const SUSPICIOUS_LEAD_REASONS = [
+  { value: "fake_customer", label: "Suspected fake customer or impersonation" },
+  { value: "payment_scam", label: "Suspicious payment request or possible scam" },
+  { value: "repeated_abusive", label: "Repeated or abusive requests" },
+  { value: "harassment", label: "Harassment or inappropriate communication" },
+  { value: "other", label: "Other suspicious activity" },
+] as const;
+
+export type SuspiciousLeadReason = (typeof SUSPICIOUS_LEAD_REASONS)[number]["value"];
+
+export type LeadAlertMode = "immediate" | "daily_summary" | "off";
+
+export interface NotificationPreferences {
+  expert_id: string;
+  lead_alerts: LeadAlertMode;
+  daily_summary_last_sent_at: string | null;
+}
+
+export async function reportSuspiciousLead(
+  params: {
+    introductionRequestId: string;
+    reason: SuspiciousLeadReason;
+    notes?: string;
+  },
+  token: string,
+) {
+  return requestWithAuth<{ success: boolean; message: string; data: unknown }>(
+    "/trust/suspicious-leads",
+    token,
+    { method: "POST", body: JSON.stringify(params) },
+  );
+}
+
+export async function getMyNotificationPreferences(token: string) {
+  return requestWithAuth<{ success: boolean; data: { preferences: NotificationPreferences } }>(
+    "/trust/notification-preferences",
+    token,
+  );
+}
+
+export async function updateMyNotificationPreferences(leadAlerts: LeadAlertMode, token: string) {
+  return requestWithAuth<{
+    success: boolean;
+    message: string;
+    data: { preferences: NotificationPreferences };
+  }>("/trust/notification-preferences", token, {
+    method: "PATCH",
+    body: JSON.stringify({ leadAlerts }),
+  });
+}
+
+/**
+ * Public: the customer has no account at this point in the quiz. The response
+ * reports whether the email actually went out, because an unconfigured mail
+ * service must not look like a delivered code.
+ */
+export async function startCustomerEmailVerification(email: string) {
+  return postJson<{
+    success: boolean;
+    message: string;
+    data: { verificationId: string; expiresAt: string; delivered: boolean };
+  }>("/trust/verify-email/start", { email });
+}
+
+export async function confirmCustomerEmailVerification(email: string, code: string) {
+  return postJson<{ success: boolean; message: string; data: unknown }>(
+    "/trust/verify-email/confirm",
+    { email, code },
+  );
+}

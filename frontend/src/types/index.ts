@@ -617,3 +617,30 @@ export interface ServiceCategory {
   questions: CategoryQuestion[];
   children: ServiceCategory[];
 }
+
+// A provider's report that an opportunity is not genuine, as the administrator
+// review queue sees it. The *_name / customer_* fields are stitched on by the
+// backend from experts and lead_submissions; they are null when that lookup
+// could not be completed, so the UI must tolerate missing detail.
+export interface AdminSuspiciousLeadReport {
+  id: string;
+  introduction_request_id: string;
+  lead_id: string | null;
+  expert_id: string;
+  reported_by_user_id: string | null;
+  reason: string;
+  notes: string | null;
+  status: "new" | "under_review" | "actioned" | "dismissed";
+  review_outcome: string | null;
+  review_notes: string | null;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  expert_name: string | null;
+  expert_organization: string | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  lead_category: string | null;
+  lead_created_at: string | null;
+}

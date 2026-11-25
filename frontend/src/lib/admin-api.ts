@@ -18,6 +18,7 @@ import type {
   ExpertApplicationRecord,
   LeadAssignmentRecord,
   PlatformPricingSettings,
+  AdminSuspiciousLeadReport,
 } from "@/types";
 
 const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000/api";
@@ -400,4 +401,33 @@ export async function patchReviewModeration(token: string, reviewId: string, pay
 export async function getReviewRecommendations(token: string) {
   const response = await requestJson<{ success: boolean; data: ReviewModerationRecommendationRecord[] }>("/admin/review-recommendations", token);
   return response.data;
+}
+
+// --- Suspicious lead reports -----------------------------------------------
+// Behind the existing lead.assign permission rather than a new one, because
+// this is a queue of leads and the people who triage leads already hold it.
+
+export async function getSuspiciousLeadReports(token: string, status?: string) {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  const response = await requestJson<{
+    success: boolean;
+    data: { reports: AdminSuspiciousLeadReport[] };
+  }>(`/trust/admin/suspicious-leads${query}`, token);
+  return response.data.reports || [];
+}
+
+export async function reviewSuspiciousLeadReport(
+  token: string,
+  reportId: string,
+  payload: {
+    status: "new" | "under_review" | "actioned" | "dismissed";
+    reviewOutcome?: string;
+    reviewNotes?: string;
+  },
+) {
+  return requestJson<{ success: boolean; message: string; data: AdminSuspiciousLeadReport }>(
+    `/trust/admin/suspicious-leads/${reportId}`,
+    token,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
 }
