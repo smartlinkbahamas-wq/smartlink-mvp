@@ -45,6 +45,10 @@ const env = {
   // Where customer-facing document links point. Derived from CORS_ORIGIN when
   // unset, but set it explicitly in production: CORS_ORIGIN is a list and its
   // first entry is not guaranteed to be the public site.
+  // The background task runner. Off by default in test so importing the app
+  // never starts a timer; on everywhere else.
+  SCHEDULER_ENABLED: String(process.env.SCHEDULER_ENABLED || "true").toLowerCase() !== "false",
+  SCHEDULER_TICK_SECONDS: toNumber(process.env.SCHEDULER_TICK_SECONDS, 60),
   FRONTEND_BASE_URL: process.env.FRONTEND_BASE_URL || "",
   TRUST_PROXY_HOPS: toNumber(process.env.TRUST_PROXY_HOPS, 1),
   PUBLIC_RATE_LIMIT_WINDOW_MINUTES: toNumber(process.env.PUBLIC_RATE_LIMIT_WINDOW_MINUTES, 60),

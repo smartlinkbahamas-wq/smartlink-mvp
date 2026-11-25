@@ -20,7 +20,21 @@ async function getMailHealth(req, res) {
   return res.status(result.ok ? 200 : 503).json({ success: result.ok, data: result });
 }
 
+
+/**
+ * Whether timed work is actually running.
+ *
+ * Reports each task's last result and what it did, because "is the scheduler
+ * working" is answered by "3 reminders sent at 14:02", not by an uptime figure.
+ */
+async function getSchedulerHealth(req, res) {
+  const { getStatus } = require("../services/scheduler.service");
+  const status = await getStatus();
+  return res.json({ success: true, data: status });
+}
+
 module.exports = {
+  getSchedulerHealth,
   getHealth,
   getMailHealth,
 };

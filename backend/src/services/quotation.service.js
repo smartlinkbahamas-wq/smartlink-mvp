@@ -361,6 +361,9 @@ async function sendQuotation(expertId, quotationId) {
       valid_until: validUntil,
       business_identity: identity,
       version: nextVersion,
+      // A re-send opens a fresh validity window, so the expiry reminder for
+      // the previous one must not suppress the next.
+      expiry_reminder_sent_at: null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", quotationId)
@@ -436,7 +439,13 @@ async function extendValidity(expertId, quotationId, additionalDays) {
 
   const { data, error } = await supabase
     .from("quotations")
-    .update({ valid_until: validUntil, updated_at: new Date().toISOString() })
+    .update({
+      valid_until: validUntil,
+      // Extending moves the deadline, so the provider should be reminded
+      // again as the new one approaches.
+      expiry_reminder_sent_at: null,
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", quotationId)
     .eq("expert_id", expertId)
     .select("*")
