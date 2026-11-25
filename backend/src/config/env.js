@@ -36,6 +36,13 @@ const env = {
   AUTH_RATE_LIMIT_MAX_ATTEMPTS: toNumber(process.env.AUTH_RATE_LIMIT_MAX_ATTEMPTS, 10),
   // Abuse controls for the unauthenticated public endpoints (leads, matches,
   // introductions, reviews, feedback), which previously had none at all.
+  // How many reverse proxies sit in front of this process. nginx terminates
+  // TLS in production, so req.ip is the proxy's address unless Express is told
+  // to read X-Forwarded-For. Without this every visitor shares one rate-limit
+  // bucket and the public endpoints lock out the whole site at once.
+  // Deliberately a hop count, never `true`: trusting the whole chain lets a
+  // client spoof X-Forwarded-For and bypass the limiter entirely.
+  TRUST_PROXY_HOPS: toNumber(process.env.TRUST_PROXY_HOPS, 1),
   PUBLIC_RATE_LIMIT_WINDOW_MINUTES: toNumber(process.env.PUBLIC_RATE_LIMIT_WINDOW_MINUTES, 60),
   PUBLIC_RATE_LIMIT_MAX: toNumber(process.env.PUBLIC_RATE_LIMIT_MAX, 10),
   PUBLIC_READ_RATE_LIMIT_MAX: toNumber(process.env.PUBLIC_READ_RATE_LIMIT_MAX, 60),

@@ -12,6 +12,9 @@ const app = express();
 
 const path = require("path");
 
+// Must come before anything that reads req.ip (rate limiters, logging).
+app.set("trust proxy", env.TRUST_PROXY_HOPS);
+
 app.use(helmet({ crossOriginResourcePolicy: false })); // allow images/files to be loaded from other origins if needed
 const allowedOrigins = (env.CORS_ORIGIN || "")
   .split(",")
