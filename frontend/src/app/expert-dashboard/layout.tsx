@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   Briefcase,
+  ClipboardList,
   Users,
   MessageSquare,
   Star,
@@ -28,6 +29,7 @@ import { canUseExpertSection } from "@/lib/role-guard";
 const navigation = [
   { name: "Dashboard", href: "/expert-dashboard", icon: LayoutDashboard },
   { name: "Opportunities", href: "/expert-dashboard/opportunities", icon: Briefcase },
+  { name: "Service Menu", href: "/expert-dashboard/services", icon: ClipboardList },
   { name: "Clients", href: "/expert-dashboard/clients", icon: Users },
   { name: "Messages", href: "/expert-dashboard/messages", icon: MessageSquare },
   { name: "Reviews", href: "/expert-dashboard/reviews", icon: Star },

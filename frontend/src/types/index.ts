@@ -644,3 +644,44 @@ export interface AdminSuspiciousLeadReport {
   lead_category: string | null;
   lead_created_at: string | null;
 }
+
+// A single service on a provider's menu.
+//
+// price is null exactly when pricing_mode is "request_quote" -- the database
+// enforces that pairing, so the UI can rely on it rather than guarding both.
+export type ServicePricingMode = "fixed" | "starting_from" | "request_quote";
+
+export interface ServiceMenuAdditionalCharge {
+  label: string;
+  amount: number;
+}
+
+export interface ServiceMenuItem {
+  id: string;
+  expert_id: string;
+  name: string;
+  description: string | null;
+  pricing_mode: ServicePricingMode;
+  price: number | null;
+  currency: string;
+  duration_minutes: number | null;
+  additional_charges: ServiceMenuAdditionalCharge[];
+  bookable: boolean;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// What the form sends. Separate from the row above because the API takes
+// camelCase and the row comes back snake_case.
+export interface ServiceMenuItemInput {
+  name: string;
+  description?: string;
+  pricingMode: ServicePricingMode;
+  price?: number | null;
+  durationMinutes?: number | null;
+  additionalCharges?: ServiceMenuAdditionalCharge[];
+  bookable?: boolean;
+  isActive?: boolean;
+}

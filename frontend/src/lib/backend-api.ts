@@ -6,6 +6,8 @@ import type {
   MissingFeedbackReason,
   ResultsFeedbackAnswer,
   ServiceCategory,
+  ServiceMenuItem,
+  ServiceMenuItemInput,
 } from "@/types";
 
 const DEFAULT_API_BASE = "http://localhost:5000/api";
@@ -454,4 +456,62 @@ export async function confirmCustomerEmailVerification(email: string, code: stri
     "/trust/verify-email/confirm",
     { email, code },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Service menu (Priority 2). A provider's list of services and prices, for the
+// trades that work from a price list rather than issuing quotations.
+// ---------------------------------------------------------------------------
+
+export async function getMyServiceMenu(token: string) {
+  return requestWithAuth<{ success: boolean; data: { items: ServiceMenuItem[] } }>(
+    "/service-menu/mine",
+    token,
+  );
+}
+
+export async function createServiceMenuItem(payload: ServiceMenuItemInput, token: string) {
+  return requestWithAuth<{ success: boolean; message: string; data: ServiceMenuItem }>(
+    "/service-menu/mine",
+    token,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export async function updateServiceMenuItem(
+  itemId: string,
+  payload: ServiceMenuItemInput,
+  token: string,
+) {
+  return requestWithAuth<{ success: boolean; message: string; data: ServiceMenuItem }>(
+    `/service-menu/mine/${itemId}`,
+    token,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
+export async function deleteServiceMenuItem(itemId: string, token: string) {
+  return requestWithAuth<{ success: boolean; message: string; data: { id: string } }>(
+    `/service-menu/mine/${itemId}`,
+    token,
+    { method: "DELETE" },
+  );
+}
+
+export async function reorderServiceMenu(orderedIds: string[], token: string) {
+  return requestWithAuth<{ success: boolean; message: string; data: { items: ServiceMenuItem[] } }>(
+    "/service-menu/mine/order",
+    token,
+    { method: "PATCH", body: JSON.stringify({ orderedIds }) },
+  );
+}
+
+/** Public: a provider's published menu. Active items only. */
+export async function getPublicServiceMenu(expertId: string) {
+  const response = await fetch(`${getApiBaseUrl()}/service-menu/${encodeURIComponent(expertId)}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error("Could not load that service menu.");
+  const parsed = (await response.json()) as { success: boolean; data: { items: ServiceMenuItem[] } };
+  return parsed.data.items || [];
 }
