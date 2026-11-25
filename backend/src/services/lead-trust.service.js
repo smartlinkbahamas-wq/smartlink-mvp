@@ -273,7 +273,54 @@ async function listSuspiciousLeadReports({ status = null, limit = 100 } = {}) {
       if (error.code === "42P01" || /schema cache/i.test(error.message || "")) return [];
       throw new AppError("Could not load suspicious lead reports.", 500, error.message);
     }
-    return data || [];
+
+    const reports = data || [];
+    if (reports.length === 0) return reports;
+
+    // An administrator decides whether to warn or restrict a customer, so the
+    // queue has to name the provider and the customer. The row itself holds
+    // only ids. Stitched in two queries rather than a PostgREST embed, which
+    // depends on relationship detection and fails silently when it misses.
+    const expertIds = [...new Set(reports.map((r) => r.expert_id).filter(Boolean))];
+    const leadIds = [...new Set(reports.map((r) => r.lead_id).filter(Boolean))];
+
+    const [expertsResult, leadsResult] = await Promise.all([
+      expertIds.length
+        ? supabase.from("experts").select("expert_id, name, organization").in("expert_id", expertIds)
+        : Promise.resolve({ data: [], error: null }),
+      leadIds.length
+        ? supabase
+            .from("lead_submissions")
+            .select("id, full_name, work_email, selected_category, created_at")
+            .in("id", leadIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    // A failed lookup degrades the detail, never the queue: a report an
+    // administrator cannot fully read is still better than no report.
+    if (expertsResult.error) {
+      console.warn("[lead-trust] could not load providers for reports:", expertsResult.error.message);
+    }
+    if (leadsResult.error) {
+      console.warn("[lead-trust] could not load leads for reports:", leadsResult.error.message);
+    }
+
+    const expertsById = new Map((expertsResult.data || []).map((e) => [e.expert_id, e]));
+    const leadsById = new Map((leadsResult.data || []).map((l) => [l.id, l]));
+
+    return reports.map((report) => {
+      const expert = expertsById.get(report.expert_id) || null;
+      const lead = leadsById.get(report.lead_id) || null;
+      return {
+        ...report,
+        expert_name: expert?.name || null,
+        expert_organization: expert?.organization || null,
+        customer_name: lead?.full_name || null,
+        customer_email: lead?.work_email || null,
+        lead_category: lead?.selected_category || null,
+        lead_created_at: lead?.created_at || null,
+      };
+    });
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw new AppError("Could not load suspicious lead reports.", 500, error.message);
