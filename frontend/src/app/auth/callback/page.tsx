@@ -76,9 +76,9 @@ export default function AuthCallbackPage() {
       }
       const hasQuizAssessment = typeof window !== "undefined" && Boolean(localStorage.getItem("smartlink_assessment_submission"));
       router.replace(
-        nextRole === "admin" || nextRole === "super_admin" || nextRole === "moderator" || nextRole === "auditor"
+        result.role === "admin" || result.role === "super_admin" || result.role === "moderator" || result.role === "auditor"
           ? "/admin"
-          : nextRole === "expert"
+          : result.role === "expert"
             ? "/expert-dashboard"
             : hasQuizAssessment
               ? "/results?verified=true"
