@@ -77,6 +77,7 @@ it means your Supabase schema has not been applied yet.
      conversion reporting
    - `sql/install_lead_trust.sql` — customer email verification, suspicious
      lead reports, notification preferences
+   - `sql/install_service_menu.sql` — provider service menus and prices
 
    **Check you are on the right project before running.** The SQL editor does
    not warn you, and running these against a different project creates tables

@@ -2,6 +2,7 @@ const express = require("express");
 
 const { healthRouter } = require("./health.routes");
 const { leadTrustRouter } = require("./lead-trust.routes");
+const { serviceMenuRouter } = require("./service-menu.routes");
 const { leadRouter } = require("./lead.routes");
 const { matchesRouter } = require("./matches.routes");
 const { introductionRouter } = require("./introduction.routes");
@@ -17,6 +18,7 @@ const apiRouter = express.Router();
 
 apiRouter.use("/health", healthRouter);
 apiRouter.use("/trust", leadTrustRouter);
+apiRouter.use("/service-menu", serviceMenuRouter);
 apiRouter.use("/leads", leadRouter);
 apiRouter.use("/matches", matchesRouter);
 apiRouter.use("/introduction-requests", introductionRouter);
