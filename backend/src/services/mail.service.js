@@ -243,6 +243,166 @@ async function sendVerificationCodeEmail({ to, code, expiresMinutes }) {
   });
 }
 
+
+function formatMoneyForEmail(amount, currency = "USD") {
+  const symbol = currency === "USD" ? "$" : `${currency} `;
+  return `${symbol}${Number(amount || 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatDateForEmail(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+}
+
+/**
+ * A quotation for the customer to review.
+ *
+ * The link and the code travel in the same email on purpose. The code is not a
+ * second factor against the customer's inbox -- it proves that whoever acts on
+ * a link that may have been forwarded is the person the quotation was actually
+ * sent to.
+ */
+async function sendQuotationEmail({
+  to,
+  customerName,
+  businessName,
+  reference,
+  jobName,
+  total,
+  currency,
+  validUntil,
+  url,
+  code,
+}) {
+  const from = businessName || "a SmartLink provider";
+  const amount = formatMoneyForEmail(total, currency);
+  const validDate = formatDateForEmail(validUntil);
+
+  const digits = String(code || "")
+    .split("")
+    .map(
+      (d) => `<td align="center" style="padding:0 3px;">
+        <div style="width:40px;height:50px;line-height:50px;background:${BRAND.wash};border:1px solid ${BRAND.line};border-radius:10px;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:22px;font-weight:700;color:${BRAND.navy};">${d}</div>
+      </td>`,
+    )
+    .join("");
+
+  return sendMail({
+    to,
+    subject: `Quotation ${reference} from ${from} — ${amount}`,
+    text: [
+      `${customerName ? `Hello ${customerName},` : "Hello,"}`,
+      "",
+      `${from} has sent you a quotation for ${jobName}.`,
+      `Reference: ${reference}`,
+      `Total: ${amount}`,
+      validDate ? `Valid until: ${validDate}` : "",
+      "",
+      `Review and respond here: ${url}`,
+      code ? `Your verification code is ${code}.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    html: layout({
+      preheader: `${from} sent you a quotation for ${jobName} — ${amount}.`,
+      heading: `Your quotation from ${from}`,
+      bodyHtml: `
+        <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:${BRAND.ink};">
+          ${customerName ? `Hello ${customerName},` : "Hello,"} here is your quotation for
+          <strong>${jobName}</strong>.
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;background:${BRAND.wash};border:1px solid ${BRAND.line};border-radius:12px;">
+          <tr><td style="padding:16px 18px;">
+            <p style="margin:0 0 6px;font-size:13px;color:${BRAND.muted};">Reference ${reference}</p>
+            <p style="margin:0;font-size:26px;font-weight:700;color:${BRAND.navy};">${amount}</p>
+            ${validDate ? `<p style="margin:8px 0 0;font-size:13px;color:${BRAND.muted};">Valid until ${validDate}</p>` : ""}
+          </td></tr>
+        </table>
+        <p style="margin:0 0 10px;font-size:15px;line-height:23px;color:${BRAND.ink};">
+          Open your quotation to approve it, decline it, or ask for changes:
+        </p>
+        <p style="margin:0 0 24px;">
+          <a href="${url}" style="display:inline-block;padding:13px 22px;background:${BRAND.navy};color:#ffffff;text-decoration:none;border-radius:10px;font-size:15px;font-weight:600;">Review your quotation</a>
+        </p>
+        ${
+          code
+            ? `<p style="margin:0 0 12px;font-size:15px;line-height:23px;color:${BRAND.ink};">
+                 You will be asked for this code to confirm it is you:
+               </p>
+               <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 18px;"><tr>${digits}</tr></table>`
+            : ""
+        }
+        <p style="margin:0;font-size:13px;line-height:20px;color:${BRAND.muted};">
+          Payment is arranged directly with ${from}. SmartLink does not take payment.
+        </p>`,
+      footerNote:
+        "If you were not expecting a quotation, you can safely ignore this email. No action will be taken.",
+    }),
+  });
+}
+
+/** An invoice for the customer to view. No code: viewing discloses only what they were already sent. */
+async function sendInvoiceEmail({
+  to,
+  customerName,
+  businessName,
+  reference,
+  jobName,
+  balanceDue,
+  currency,
+  dueDate,
+  url,
+}) {
+  const from = businessName || "a SmartLink provider";
+  const amount = formatMoneyForEmail(balanceDue, currency);
+  const due = formatDateForEmail(dueDate);
+
+  return sendMail({
+    to,
+    subject: `Invoice ${reference} from ${from} — ${amount} due`,
+    text: [
+      `${customerName ? `Hello ${customerName},` : "Hello,"}`,
+      "",
+      `${from} has sent you invoice ${reference} for ${jobName}.`,
+      `Balance due: ${amount}`,
+      due ? `Due by: ${due}` : "",
+      "",
+      `View your invoice here: ${url}`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    html: layout({
+      preheader: `Invoice ${reference} from ${from} — ${amount} due.`,
+      heading: `Your invoice from ${from}`,
+      bodyHtml: `
+        <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:${BRAND.ink};">
+          ${customerName ? `Hello ${customerName},` : "Hello,"} here is your invoice for
+          <strong>${jobName}</strong>.
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;background:${BRAND.wash};border:1px solid ${BRAND.line};border-radius:12px;">
+          <tr><td style="padding:16px 18px;">
+            <p style="margin:0 0 6px;font-size:13px;color:${BRAND.muted};">Invoice ${reference}</p>
+            <p style="margin:0;font-size:26px;font-weight:700;color:${BRAND.navy};">${amount} due</p>
+            ${due ? `<p style="margin:8px 0 0;font-size:13px;color:${BRAND.muted};">Due by ${due}</p>` : ""}
+          </td></tr>
+        </table>
+        <p style="margin:0 0 24px;">
+          <a href="${url}" style="display:inline-block;padding:13px 22px;background:${BRAND.navy};color:#ffffff;text-decoration:none;border-radius:10px;font-size:15px;font-weight:600;">View your invoice</a>
+        </p>
+        <p style="margin:0;font-size:13px;line-height:20px;color:${BRAND.muted};">
+          Payment is arranged directly with ${from}. SmartLink does not take payment and cannot
+          collect it on their behalf.
+        </p>`,
+      footerNote: "Questions about this invoice should go directly to the provider who issued it.",
+    }),
+  });
+}
+
 module.exports = {
   sendVerificationCodeEmail,
   isMailConfigured,
@@ -250,4 +410,6 @@ module.exports = {
   verifyMailConnection,
   sendOtpEmail,
   sendVerificationEmail,
+  sendQuotationEmail,
+  sendInvoiceEmail,
 };

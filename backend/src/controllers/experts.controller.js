@@ -168,7 +168,9 @@ async function getExpertDashboardData(req, res) {
       data: dashboardData,
     });
   } catch (error) {
-    require("fs").appendFileSync("/tmp/debug-error.log", error.stack + "\\n");
+    // Leftover debug write removed: appending to /tmp on an error path throws a
+    // second error when the disk is full or the path is not writable, which
+    // masks the original failure.
     throw error;
   }
 }
@@ -182,7 +184,12 @@ async function patchUpdateExpertProfile(req, res) {
   const allowedFields = [
     "name", "role", "organization", "location", "category_tags", "service_tags",
     "budget_range", "availability_status", "remote_available", "hourly_rate_usd",
-    "years_experience", "custom_packages", "introduction_bio"
+    "years_experience", "custom_packages", "introduction_bio",
+    // Business identity, for quotations and invoices. hourly_cost_usd is the
+    // provider's COST per hour and is distinct from hourly_rate_usd, which is
+    // the sell rate the matching engine compares against a customer's budget.
+    "business_name", "business_address", "business_phone", "business_email",
+    "website_url", "logo_url", "vat_registered", "vat_number", "hourly_cost_usd"
   ];
   const updates = {};
   for (const field of allowedFields) {

@@ -78,6 +78,14 @@ it means your Supabase schema has not been applied yet.
    - `sql/install_lead_trust.sql` — customer email verification, suspicious
      lead reports, notification preferences
    - `sql/install_service_menu.sql` — provider service menus and prices
+   - `sql/install_business_foundations.sql` — business identity on the provider,
+     gap-free document numbering, secure customer links. **Run this before the
+     three below; they depend on it.**
+   - `sql/install_quickcost.sql` — job cost and profit estimates
+   - `sql/install_quotations.sql` — quotations, versions, templates, saved
+     lines, suggested charges
+   - `sql/install_invoices.sql` — invoices and payments
+   - `sql/install_jobs.sql` — awarded jobs and expected-date revisions
 
    **Check you are on the right project before running.** The SQL editor does
    not warn you, and running these against a different project creates tables

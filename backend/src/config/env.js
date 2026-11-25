@@ -42,6 +42,10 @@ const env = {
   // bucket and the public endpoints lock out the whole site at once.
   // Deliberately a hop count, never `true`: trusting the whole chain lets a
   // client spoof X-Forwarded-For and bypass the limiter entirely.
+  // Where customer-facing document links point. Derived from CORS_ORIGIN when
+  // unset, but set it explicitly in production: CORS_ORIGIN is a list and its
+  // first entry is not guaranteed to be the public site.
+  FRONTEND_BASE_URL: process.env.FRONTEND_BASE_URL || "",
   TRUST_PROXY_HOPS: toNumber(process.env.TRUST_PROXY_HOPS, 1),
   PUBLIC_RATE_LIMIT_WINDOW_MINUTES: toNumber(process.env.PUBLIC_RATE_LIMIT_WINDOW_MINUTES, 60),
   PUBLIC_RATE_LIMIT_MAX: toNumber(process.env.PUBLIC_RATE_LIMIT_MAX, 10),
