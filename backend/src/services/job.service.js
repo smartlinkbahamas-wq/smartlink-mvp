@@ -273,6 +273,24 @@ async function updateJobStatus(expertId, jobId, { status, actualCompletionDate, 
     notes: notes?.trim() || null,
   });
 
+  // The provider saying it is done starts the customer's side: silence must
+  // never count as confirmation, so the customer is asked immediately rather
+  // than waiting for the next scheduled sweep.
+  //
+  // Cannot throw: a provider marking work complete must not fail because an
+  // email did not go out. The scheduler chases it afterwards regardless.
+  if (status === "provider_completed") {
+    try {
+      const { sendCustomerConfirmationRequest } = require("./job-monitoring-runner.service");
+      const { loadProvider } = require("./quotation.service");
+      const provider = await loadProvider(expertId).catch(() => null);
+      const businessName = provider?.business_name || provider?.name || "your provider";
+      await sendCustomerConfirmationRequest(data, businessName);
+    } catch (error) {
+      console.warn("[jobs] could not ask the customer to confirm:", error.message);
+    }
+  }
+
   return decorate(data);
 }
 
@@ -331,6 +349,12 @@ async function reviseExpectedDate(expertId, jobId, { requestedDate, reason }) {
 
     if (updateError) guard(updateError, "Could not apply that date change.");
     updatedJob = decorate(data);
+
+    // The trail is cleared so the new deadline earns its own notices.
+    // Without this, a job moved from last week to next month would never be
+    // chased again -- every notice for it had already been sent once.
+    const { resetMonitoring } = require("./job-monitoring.service");
+    await resetMonitoring(jobId);
   }
 
   return {

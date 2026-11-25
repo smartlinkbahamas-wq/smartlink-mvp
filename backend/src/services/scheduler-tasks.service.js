@@ -338,6 +338,10 @@ function registerAll() {
   register("quotation_expiry_reminders", quotationExpiryReminders);
   register("daily_lead_summary", dailyLeadSummary);
   register("appointment_reminders", appointmentReminders);
+  // Lives in its own module: the schedule logic is a pure function there, so
+  // it can be tested without a mail service or a database.
+  const { runJobMonitoring } = require("./job-monitoring-runner.service");
+  register("job_monitoring", runJobMonitoring);
 }
 
 module.exports = {

@@ -93,6 +93,9 @@ it means your Supabase schema has not been applied yet.
      `GET /api/health/scheduler` reports `installed: false`.
    - `sql/install_calendar.sql` — working hours, blocked periods, bookings, and
      the appointment reminder task. Run after install_scheduler.sql.
+   - `sql/install_job_monitoring.sql` — the monitoring schedule, customer
+     completion confirmation, telephone verification attempts and the
+     Unverifiable category. Run after install_jobs.sql and install_scheduler.sql.
 
    **Check you are on the right project before running.** The SQL editor does
    not warn you, and running these against a different project creates tables
