@@ -71,6 +71,21 @@ async function createIntroductionRequests(payload) {
     throw new AppError("Failed to create introduction requests.", 500, error.message);
   }
 
+  // Open each inquiry's stage history at 'submitted' so the conversion
+  // funnel has a complete denominator. Append-only and non-blocking.
+  const { recordStageEvent, SUBJECT_TYPES, ACTOR_TYPES } = require("./pipeline.service");
+  for (const row of data || []) {
+    await recordStageEvent({
+      subjectType: SUBJECT_TYPES.INTRODUCTION_REQUEST,
+      subjectId: row.id,
+      expertId: row.expert_id,
+      leadId: row.lead_id,
+      fromStage: null,
+      toStage: "submitted",
+      actorType: ACTOR_TYPES.CUSTOMER,
+    });
+  }
+
   const tokenOutputs = [];
   for (const row of data || []) {
     const rawToken = createRawToken();

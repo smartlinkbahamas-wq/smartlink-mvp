@@ -86,10 +86,25 @@ const path = require("path");
 const fs = require("fs");
 const { mkdirp } = require("mkdirp");
 
+// The browser's accept="" attribute is a convenience, not a control, so the
+// allowlist is enforced here. Extensions are derived from the accepted type
+// rather than taken from the uploaded filename, which the client controls.
+const ALLOWED_UPLOAD_TYPES = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "application/pdf": ".pdf",
+};
+
 const storage = multer.diskStorage({
   destination: async function (req, file, cb) {
-    // We expect the user to be resolved via middleware
-    const userId = req.user?.id || req.user?.sub || "anonymous";
+    // getMeFromAccessToken returns userId; reading .id/.sub silently fell
+    // through to "anonymous", so every provider's documents landed in one
+    // shared folder.
+    const userId = req.user?.userId;
+    if (!userId) {
+      return cb(new AppError("Sign in again to upload documents.", 401, { code: "upload_user_unresolved" }));
+    }
     const dir = path.join(__dirname, `../../uploads/experts/${userId}`);
     try {
       await mkdirp(dir);
@@ -100,13 +115,20 @@ const storage = multer.diskStorage({
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    const extension = ALLOWED_UPLOAD_TYPES[file.mimetype] || "";
+    cb(null, file.fieldname + '-' + uniqueSuffix + extension);
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: function (req, file, cb) {
+    if (!ALLOWED_UPLOAD_TYPES[file.mimetype]) {
+      return cb(new AppError("Upload a JPG, PNG, WebP or PDF file.", 400, { code: "upload_type_rejected" }));
+    }
+    cb(null, true);
+  },
 });
 
 async function postUploadDocument(req, res) {

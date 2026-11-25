@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { getExpertDashboardData } from "@/lib/backend-api";
 import { getAdminAccessToken, getSessionMe } from "@/lib/admin-session";
+import { updateOpportunityStatus } from "@/lib/backend-api";
 import { canUseExpertSection } from "@/lib/role-guard";
 import { useRouter } from "next/navigation";
 
@@ -52,21 +53,8 @@ export default function OpportunitiesPage() {
       const token = getAdminAccessToken();
       if (!token) return;
 
-      const res = await fetch(`/api/v1/experts/opportunities/${id}/status`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ status })
-      });
-
-      if (res.ok) {
-        // Remove from list
-        setOpportunities(opportunities.filter(opp => opp.id !== id));
-      } else {
-        alert("Failed to update status");
-      }
+      await updateOpportunityStatus(id, status as "accepted" | "declined" | "more_info", token);
+      setOpportunities(opportunities.filter(opp => opp.id !== id));
     } catch (error) {
       console.error(error);
     }

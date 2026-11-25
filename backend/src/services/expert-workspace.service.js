@@ -32,7 +32,13 @@ async function getDashboardOverview(userId) {
   const reqs = requests || [];
   
   // Calculate Metrics
-  const pendingRequests = reqs.filter(r => r.status === 'submitted' || r.status === 'pending');
+  // 'more_info' means the provider asked the customer for more detail, so the
+  // opportunity is still open and awaiting resolution. It previously matched
+  // none of the filters below, which made the request disappear from the
+  // provider's list, the customer's list, and both rate calculations.
+  const pendingRequests = reqs.filter(
+    (r) => r.status === 'submitted' || r.status === 'pending' || r.status === 'more_info',
+  );
   const activeClients = reqs.filter(r => r.status === 'accepted');
   const allCompleted = reqs.filter(r => r.status === 'accepted' || r.status === 'declined' || r.status === 'completed');
   
@@ -54,8 +60,14 @@ async function getDashboardOverview(userId) {
   
   // Aggregate impressions by date for charts
   const impressionsByDate = {};
-  (impressions || []).forEach(imp => {
-    const date = new Date(imp.created_at).toLocaleDateString();
+  (impressions || []).forEach((imp) => {
+    // expert_impression_events timestamps the row as shown_at; reading
+    // created_at here produced one bucket labelled "Invalid Date".
+    const stamp = imp.shown_at || imp.created_at;
+    if (!stamp) return;
+    const parsed = new Date(stamp);
+    if (Number.isNaN(parsed.getTime())) return;
+    const date = parsed.toLocaleDateString();
     impressionsByDate[date] = (impressionsByDate[date] || 0) + 1;
   });
   
@@ -73,12 +85,20 @@ async function getDashboardOverview(userId) {
     .eq("expert_id", expertId)
     .order("created_at", { ascending: false });
 
-  const reviews = (reviewsData || []).map(r => ({
-    id: r.id,
-    author: r.client_name || "Anonymous Client",
-    rating: r.rating || 5,
-    comment: r.feedback_text || "",
-    date: r.created_at
+  // expert_reviews keys on feedback_id and stores the score and text as
+  // public_star_rating / public_review_comment. The previous mapping read
+  // column names that do not exist, so every review rendered as
+  // "Anonymous Client, 5 stars, no comment".
+  const reviews = (reviewsData || []).map((r) => ({
+    id: r.feedback_id,
+    author: "Anonymous Client",
+    rating: r.public_star_rating === null || r.public_star_rating === undefined
+      ? null
+      : Number(r.public_star_rating),
+    comment: r.public_review_comment || "",
+    wouldRecommend: r.would_recommend,
+    status: r.review_status,
+    date: r.created_at,
   }));
 
   const metrics = {
@@ -105,6 +125,9 @@ async function getDashboardOverview(userId) {
   const opportunities = pendingRequests.map(r => ({
     id: r.id,
     clientName: r.lead_name || "Confidential Client",
+    // Surfaced so an item the provider has already asked about is not shown
+    // as if it were a brand new lead.
+    status: r.status,
     matchScore: 90, // Placeholder as match score isn't stored in intro request directly
     category: r.category || "General",
     urgency: r.urgency_level || "Medium",
@@ -275,6 +298,16 @@ async function updateOpportunityStatus(userId, opportunityId, status) {
 
   const expertId = link?.expert_id || userId;
 
+  // Read the current stage first so the transition can be recorded as
+  // from -> to. The update below overwrites status in place, so this is the
+  // only moment the previous value is available.
+  const { data: before } = await supabase
+    .from("introduction_requests")
+    .select("status, lead_id")
+    .eq("id", opportunityId)
+    .eq("expert_id", expertId)
+    .maybeSingle();
+
   const { data, error } = await supabase
     .from("introduction_requests")
     .update({ status })
@@ -282,8 +315,22 @@ async function updateOpportunityStatus(userId, opportunityId, status) {
     .eq("expert_id", expertId)
     .select()
     .single();
-    
+
   if (error) throw error;
+
+  // Append-only history, so stage-to-stage timing becomes computable. This
+  // never throws and never blocks the provider's action.
+  const { recordStageEvent, SUBJECT_TYPES, ACTOR_TYPES } = require("./pipeline.service");
+  await recordStageEvent({
+    subjectType: SUBJECT_TYPES.INTRODUCTION_REQUEST,
+    subjectId: opportunityId,
+    expertId,
+    leadId: before?.lead_id || data?.lead_id || null,
+    fromStage: before?.status || null,
+    toStage: status,
+    actorType: ACTOR_TYPES.EXPERT,
+    actorUserId: userId,
+  });
   return data;
 }
 

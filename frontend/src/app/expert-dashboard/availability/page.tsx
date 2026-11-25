@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { getExpertDashboardData } from "@/lib/backend-api";
 import { getAdminAccessToken, getSessionMe } from "@/lib/admin-session";
+import { updateExpertProfile } from "@/lib/backend-api";
 import { canUseExpertSection } from "@/lib/role-guard";
 import { useRouter } from "next/navigation";
 import { Calendar, Save, Clock, ToggleLeft, ToggleRight } from "lucide-react";
@@ -55,19 +56,10 @@ export default function AvailabilityPage() {
       const token = getAdminAccessToken();
       if (!token) throw new Error("No token found");
 
-      const res = await fetch("/api/v1/experts/me", {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          availability_status: availabilityStatus,
-          remote_available: remoteAvailable
-        })
-      });
-
-      if (!res.ok) throw new Error("Failed to update availability");
+      await updateExpertProfile(
+        { availability_status: availabilityStatus, remote_available: remoteAvailable },
+        token,
+      );
       
       setSuccessMsg("Availability updated successfully!");
       setTimeout(() => setSuccessMsg(""), 3000);

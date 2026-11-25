@@ -329,11 +329,24 @@ export async function submitClientReviewToBackend(
   );
 }
 
+// PATCH, not POST: the backend registers only expertsRouter.patch("/me"),
+// so the previous POST never reached it and profile saves silently failed.
 export async function updateExpertProfile(payload: Record<string, any>, token: string) {
-  return postJsonWithAuth<{ success: boolean; data: any }>(
-    "/experts/me",
-    payload,
+  return requestWithAuth<{ success: boolean; data: any }>("/experts/me", token, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateOpportunityStatus(
+  opportunityId: string,
+  status: "accepted" | "declined" | "more_info",
+  token: string,
+) {
+  return requestWithAuth<{ success: boolean; data: unknown }>(
+    `/experts/opportunities/${opportunityId}/status`,
     token,
+    { method: "PATCH", body: JSON.stringify({ status }) },
   );
 }
 

@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { getAdminAccessToken } from "@/lib/admin-session";
+import { uploadExpertDocumentToBackend } from "@/lib/backend-api";
 import { UploadCloud, CheckCircle2, ShieldCheck, FileText, AlertCircle } from "lucide-react";
 
 export default function VerificationPage() {
@@ -28,18 +29,7 @@ export default function VerificationPage() {
       const token = getAdminAccessToken();
       if (!token) throw new Error("Authentication required");
 
-      const formData = new FormData();
-      formData.append("document", file);
-
-      const res = await fetch("/api/v1/experts/documents/upload", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`
-        },
-        body: formData
-      });
-
-      if (!res.ok) throw new Error("Upload failed. Please try again.");
+      await uploadExpertDocumentToBackend(file, token);
 
       setSuccess(true);
       setFile(null);
