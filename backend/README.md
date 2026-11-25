@@ -69,6 +69,18 @@ it means your Supabase schema has not been applied yet.
 1. Open Supabase dashboard for your project.
 2. Go to SQL Editor.
 3. Paste and run `backend/sql/supabase_schema.sql`.
+4. Then run these, in any order. Each is safe to re-run, and the app degrades
+   gracefully (with a clear message) until the matching one has been applied:
+   - `sql/install_service_categories.sql` — quiz categories
+   - `sql/install_category_questions.sql` — admin-authored category questions
+   - `sql/install_pipeline_stage_events.sql` — stage history, required for any
+     conversion reporting
+   - `sql/install_lead_trust.sql` — customer email verification, suspicious
+     lead reports, notification preferences
+
+   **Check you are on the right project before running.** The SQL editor does
+   not warn you, and running these against a different project creates tables
+   nothing reads.
 
 ### Option B: Bootstrap script (if you have `psql`)
 1. Get DB URI from Supabase: `Project Settings -> Database -> Connection string (URI)`.
