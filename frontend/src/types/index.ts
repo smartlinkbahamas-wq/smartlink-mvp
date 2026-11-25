@@ -979,3 +979,36 @@ export interface CustomerInvoiceView {
   business: BusinessIdentitySnapshot | null;
   paymentHistory: Array<{ amount: number; paidOn: string; method: string | null }>;
 }
+
+// A provider's customer record. Email is the primary identifier -- the
+// database enforces one record per address per provider, case-insensitively.
+export interface Customer {
+  id: string;
+  expert_id: string;
+  email: string | null;
+  full_name: string;
+  phone: string | null;
+  // Recorded at creation and never changed.
+  source: "smartlink" | "provider_entered";
+  first_lead_id: string | null;
+  notes: string | null;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerHistory {
+  quotations: Array<{
+    id: string; reference: string; job_name: string; total: number;
+    currency: string; status: string; valid_until: string | null; created_at: string;
+  }>;
+  invoices: Array<{
+    id: string; reference: string; job_name: string; total: number;
+    currency: string; status: string; due_date: string | null; created_at: string;
+  }>;
+  jobs: Array<{
+    id: string; reference: string; job_name: string; status: string;
+    agreed_price: number | null; currency: string;
+    expected_completion_date: string | null; created_at: string;
+  }>;
+}

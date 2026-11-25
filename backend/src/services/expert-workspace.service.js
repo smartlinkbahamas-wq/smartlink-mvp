@@ -331,6 +331,22 @@ async function updateOpportunityStatus(userId, opportunityId, status) {
     actorType: ACTOR_TYPES.EXPERT,
     actorUserId: userId,
   });
+
+  // Accepting an introduction creates the customer record, as specified.
+  //
+  // Deliberately after the status update and deliberately unable to throw: a
+  // provider accepting work must not fail because a bookkeeping row could not
+  // be written. A missing customer record is recoverable by hand; a failed
+  // acceptance loses the job.
+  if (status === "accepted") {
+    const { findOrCreateFromLead } = require("./customer.service");
+    const leadId = before?.lead_id || data?.lead_id || null;
+    const customerId = await findOrCreateFromLead(expertId, leadId, opportunityId);
+    if (customerId) {
+      return { ...data, customer_id: customerId };
+    }
+  }
+
   return data;
 }
 

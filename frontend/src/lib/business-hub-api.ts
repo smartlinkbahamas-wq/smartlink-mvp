@@ -8,6 +8,8 @@
 
 import { clearAdminSession } from "@/lib/admin-session";
 import type {
+  Customer,
+  CustomerHistory,
   CustomerInvoiceView,
   CustomerQuotationView,
   Invoice,
@@ -414,4 +416,62 @@ export function formatMoney(amount: number | null | undefined, currency = "USD")
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+// --- Customers ----------------------------------------------------------------
+
+export async function listCustomers(token: string, opts?: { search?: string; includeArchived?: boolean }) {
+  const params = new URLSearchParams();
+  if (opts?.search) params.set("search", opts.search);
+  if (opts?.includeArchived) params.set("includeArchived", "true");
+  const query = params.toString() ? `?${params}` : "";
+  const res = await request<{ data: { customers: Customer[] } }>(`/customers${query}`, token);
+  return res.data.customers || [];
+}
+
+export async function getCustomer(id: string, token: string) {
+  const res = await request<{ data: { customer: Customer; history: CustomerHistory } }>(
+    `/customers/${id}`,
+    token,
+  );
+  return res.data;
+}
+
+export async function createCustomer(
+  payload: { fullName: string; email?: string; phone?: string; notes?: string },
+  token: string,
+) {
+  const res = await request<{ data: Customer }>("/customers", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
+export async function updateCustomer(
+  id: string,
+  payload: { fullName: string; email?: string; phone?: string; notes?: string },
+  token: string,
+) {
+  const res = await request<{ data: Customer }>(`/customers/${id}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
+export async function archiveCustomer(id: string, archived: boolean, token: string) {
+  const res = await request<{ data: Customer }>(`/customers/${id}/archive`, token, {
+    method: "POST",
+    body: JSON.stringify({ archived }),
+  });
+  return res.data;
+}
+
+export async function mergeCustomers(keepId: string, mergeId: string, token: string) {
+  const res = await request<{ data: Customer }>("/customers/merge", token, {
+    method: "POST",
+    body: JSON.stringify({ keepId, mergeId }),
+  });
+  return res.data;
 }

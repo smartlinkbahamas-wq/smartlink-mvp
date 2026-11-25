@@ -86,6 +86,8 @@ it means your Supabase schema has not been applied yet.
      lines, suggested charges
    - `sql/install_invoices.sql` — invoices and payments
    - `sql/install_jobs.sql` — awarded jobs and expected-date revisions
+   - `sql/install_customers.sql` — customer records, and the customer_id link
+     on quotations, invoices and jobs. Backfills from accepted introductions.
    - `sql/install_scheduler.sql` — the background task runner. Until this is
      applied, quotation expiry reminders and daily lead summaries do not run;
      `GET /api/health/scheduler` reports `installed: false`.

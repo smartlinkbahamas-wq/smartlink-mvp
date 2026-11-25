@@ -266,6 +266,30 @@ async function createQuotation(expertId, payload) {
     .single();
 
   if (error) guard(error, "Could not create that quotation.");
+
+  // Fills the provider's customer list through ordinary work, rather than
+  // asking them to maintain it separately. Cannot throw, so a failure here
+  // leaves the quotation intact and merely unlinked.
+  const { findOrCreateForDocument } = require("./customer.service");
+  const customerId = await findOrCreateForDocument(expertId, {
+    email: data.customer_email,
+    fullName: data.customer_name,
+    phone: data.customer_phone,
+    leadId: data.lead_id,
+    introductionRequestId: data.introduction_request_id,
+  });
+
+  if (customerId) {
+    const { data: linked } = await supabase
+      .from("quotations")
+      .update({ customer_id: customerId })
+      .eq("id", data.id)
+      .eq("expert_id", expertId)
+      .select("*")
+      .maybeSingle();
+    if (linked) return decorate(linked);
+  }
+
   return decorate(data);
 }
 
