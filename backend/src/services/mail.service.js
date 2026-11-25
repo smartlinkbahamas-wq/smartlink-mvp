@@ -209,7 +209,42 @@ async function sendVerificationEmail({ to, actionLink }) {
   });
 }
 
+async function sendVerificationCodeEmail({ to, code, expiresMinutes }) {
+  const digits = String(code)
+    .split("")
+    .map(
+      (d) => `<td align="center" style="padding:0 3px;">
+        <div style="width:44px;height:54px;line-height:54px;background:${BRAND.wash};border:1px solid ${BRAND.line};border-radius:10px;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:24px;font-weight:700;color:${BRAND.navy};">${d}</div>
+      </td>`,
+    )
+    .join("");
+
+  return sendMail({
+    to,
+    subject: `${code} is your SmartLink verification code`,
+    text: `Your verification code is ${code}. It expires in ${expiresMinutes} minutes. If you did not request this, ignore this email.`,
+    html: layout({
+      preheader: `Your verification code is ${code} — expires in ${expiresMinutes} minutes.`,
+      heading: "Confirm your email address",
+      bodyHtml: `
+        <p style="margin:0 0 22px;font-size:15px;line-height:23px;color:${BRAND.ink};">
+          Enter this code to confirm your email address and send your request to matching
+          providers. It expires in <strong>${expiresMinutes} minutes</strong>.
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 22px;">
+          <tr>${digits}</tr>
+        </table>
+        <p style="margin:0;font-size:13px;line-height:20px;color:${BRAND.muted};">
+          We ask for this so the providers we introduce you to know your request is genuine.
+        </p>`,
+      footerNote:
+        "If you did not ask to be matched with a service provider, you can safely ignore this email.",
+    }),
+  });
+}
+
 module.exports = {
+  sendVerificationCodeEmail,
   isMailConfigured,
   sendMail,
   verifyMailConnection,
