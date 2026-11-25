@@ -5,6 +5,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Briefcase,
   Building2,
+  CheckCircle2,
   Globe2,
   Loader2,
   LocateFixed,
@@ -25,7 +26,12 @@ import { Progress } from "@/components/ui/progress";
 import { mockQuizEnginePayload } from "@/data";
 import { saveAssessmentSubmission } from "@/lib/assessment-storage";
 import { rankExpertsForSubmission } from "@/lib/expert-matching";
-import { createLeadInBackend, getServiceCategories } from "@/lib/backend-api";
+import {
+  createLeadInBackend,
+  getServiceCategories,
+  startCustomerEmailVerification,
+  confirmCustomerEmailVerification,
+} from "@/lib/backend-api";
 import { cn } from "@/lib/utils";
 import type {
   ServiceCategory,
@@ -1516,6 +1522,79 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
     setValue("island", defaults.island, { shouldDirty: true });
   }, [answers.location, setValue]);
 
+  // --- Customer email verification -----------------------------------------
+  // The customer proves they control the address before the request is
+  // submitted, so providers paying for leads are not paying for typos or
+  // invented addresses.
+  const watchedEmail = watch("workEmail");
+  const [verifiedEmail, setVerifiedEmail] = useState("");
+  const [codeSentTo, setCodeSentTo] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [verifyError, setVerifyError] = useState("");
+  const [verifyNotice, setVerifyNotice] = useState("");
+  // Set when the server accepted the request but could not deliver the email.
+  // That is an infrastructure fault, not a suspicious customer, so the form
+  // stops blocking rather than silently discarding a genuine lead.
+  const [verificationUnavailable, setVerificationUnavailable] = useState(false);
+
+  const normalisedEmail = (watchedEmail || "").trim().toLowerCase();
+  const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalisedEmail);
+  const emailIsVerified = Boolean(normalisedEmail) && verifiedEmail === normalisedEmail;
+  const codeWasSentToThisAddress = codeSentTo === normalisedEmail;
+
+  async function handleSendVerificationCode() {
+    if (!emailLooksValid || verifyBusy) return;
+
+    setVerifyBusy(true);
+    setVerifyError("");
+    setVerifyNotice("");
+
+    try {
+      const response = await startCustomerEmailVerification(normalisedEmail);
+      if (response.data?.delivered === false) {
+        setVerificationUnavailable(true);
+        setVerifyNotice(
+          "We could not send the code right now. You can continue without verifying.",
+        );
+        return;
+      }
+      setCodeSentTo(normalisedEmail);
+      setVerificationCode("");
+      setVerifyNotice(`We sent a 6-digit code to ${normalisedEmail}. It expires in 15 minutes.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not send a code.";
+      // A 503 means the feature is not installed on this environment. Blocking
+      // the customer over that would lose the lead for no benefit.
+      if (/not set up yet/i.test(message)) {
+        setVerificationUnavailable(true);
+        setVerifyNotice("Email verification is unavailable. You can continue without verifying.");
+      } else {
+        setVerifyError(message);
+      }
+    } finally {
+      setVerifyBusy(false);
+    }
+  }
+
+  async function handleConfirmVerificationCode() {
+    if (verificationCode.trim().length !== 6 || verifyBusy) return;
+
+    setVerifyBusy(true);
+    setVerifyError("");
+    setVerifyNotice("");
+
+    try {
+      await confirmCustomerEmailVerification(normalisedEmail, verificationCode.trim());
+      setVerifiedEmail(normalisedEmail);
+      setVerifyNotice("Email verified.");
+    } catch (error) {
+      setVerifyError(error instanceof Error ? error.message : "That code was not accepted.");
+    } finally {
+      setVerifyBusy(false);
+    }
+  }
+
   const locationScope = watch("locationScope");
   const leadLocationValue = watch("location");
   const filteredLocationSuggestions = useMemo(
@@ -1879,6 +1958,13 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
       diagnosticProfile,
     };
 
+    // The disabled button is a convenience, not the control. A customer who
+    // re-enables it in DevTools still cannot submit an unverified address.
+    if (!emailIsVerified && !verificationUnavailable) {
+      setVerifyError("Please verify your email address before continuing.");
+      return;
+    }
+
     const rankedExperts = rankExpertsForSubmission(payload, payload.highestRiskCategory, mockQuizEnginePayload.experts);
     payload.recommendedExpertIds = rankedExperts.length > 0
       ? rankedExperts.slice(0, 3).map((match) => match.expert.id)
@@ -2158,6 +2244,63 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
                           />
                         </div>
                         {errors.workEmail ? <p className="text-xs text-rose-600">{errors.workEmail.message}</p> : null}
+
+                        {emailIsVerified ? (
+                          <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+                            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                            Email verified
+                          </p>
+                        ) : verificationUnavailable ? null : codeWasSentToThisAddress ? (
+                          <div className="space-y-2 rounded-2xl border border-[#D9E3F3] bg-[#F7FAFF] p-3">
+                            <label htmlFor="verificationCode" className="block text-xs font-medium text-[#111827]">
+                              Enter the 6-digit code we emailed you
+                            </label>
+                            <div className="flex gap-2">
+                              <input
+                                id="verificationCode"
+                                inputMode="numeric"
+                                autoComplete="one-time-code"
+                                maxLength={6}
+                                value={verificationCode}
+                                onChange={(event) =>
+                                  setVerificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+                                }
+                                placeholder="123456"
+                                className="h-10 w-32 rounded-xl border border-[#D9E3F3] bg-white px-3 text-sm tracking-[0.3em] text-[#111827] outline-none focus:border-[#356AF6]"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleConfirmVerificationCode}
+                                disabled={verificationCode.length !== 6 || verifyBusy}
+                                className="h-10 rounded-xl bg-[#356AF6] px-4 text-sm font-semibold text-white transition hover:bg-[#2C59D8] disabled:opacity-50"
+                              >
+                                {verifyBusy ? "Checking..." : "Verify"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSendVerificationCode}
+                                disabled={verifyBusy}
+                                className="h-10 rounded-xl px-3 text-sm font-medium text-[#356AF6] underline disabled:opacity-50"
+                              >
+                                Resend
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleSendVerificationCode}
+                            disabled={!emailLooksValid || verifyBusy}
+                            className="rounded-xl border border-[#356AF6] px-3 py-1.5 text-xs font-semibold text-[#356AF6] transition hover:bg-[#356AF6]/5 disabled:opacity-50"
+                          >
+                            {verifyBusy ? "Sending..." : "Send verification code"}
+                          </button>
+                        )}
+
+                        {verifyError ? <p className="text-xs text-rose-600">{verifyError}</p> : null}
+                        {verifyNotice && !verifyError ? (
+                          <p className="text-xs text-[#5E6F8A]">{verifyNotice}</p>
+                        ) : null}
                       </div>
 
                       <div className="space-y-1.5">
@@ -2421,7 +2564,14 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
                     >
                       Back to Questions
                     </Button>
-                    <Button type="submit" size="lg" className="h-12 flex-1 bg-[#356AF6] text-white hover:bg-[#2C59D8]">View My Results</Button>
+                    <Button
+                      type="submit"
+                      size="lg"
+                      disabled={!emailIsVerified && !verificationUnavailable}
+                      className="h-12 flex-1 bg-[#356AF6] text-white hover:bg-[#2C59D8] disabled:opacity-50"
+                    >
+                      {emailIsVerified || verificationUnavailable ? "View My Results" : "Verify your email to continue"}
+                    </Button>
                   </div>
                 </form>
               </div>
