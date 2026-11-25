@@ -3,14 +3,71 @@ const { requireSupabase } = require("../utils/supabase-guard");
 const { deriveLeadQualityAndPrice } = require("./lead-qualification.service");
 const { trackMetricEvent } = require("./metrics.service");
 
+// How long two identical submissions are treated as the same inquiry rather
+// than two. Candy's own test on 22 Nov produced two identical rows a minute
+// apart, which is the case this guards.
+const DUPLICATE_WINDOW_MINUTES = 30;
+
+/**
+ * A second submission of the same request, rather than a genuine second
+ * inquiry. Matches on the person and what they asked for, within a window.
+ *
+ * Deliberately NOT matched on email alone: a customer may legitimately submit
+ * two different requests (an electrician this week, an accountant next
+ * month), and collapsing those would lose a real lead.
+ */
+async function findRecentDuplicateLead(leadData) {
+  const email = String(leadData.workEmail || "").trim().toLowerCase();
+  if (!email) return null;
+
+  const supabase = requireSupabase();
+  const since = new Date(Date.now() - DUPLICATE_WINDOW_MINUTES * 60 * 1000).toISOString();
+  const category = leadData.selectedCategory || leadData.highestRiskCategory || null;
+
+  let query = supabase
+    .from("lead_submissions")
+    .select("*")
+    .eq("work_email", email)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  // A null category must match other nulls, which .eq() cannot express.
+  query = category ? query.eq("selected_category", category) : query.is("selected_category", null);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) {
+    // Never block a submission because the duplicate check itself failed —
+    // a lost lead is worse than a duplicated one.
+    console.warn("[lead] duplicate check failed, continuing:", error.message);
+    return null;
+  }
+  return data || null;
+}
+
 async function createLeadSubmission(leadData) {
   const supabase = requireSupabase();
-  
+
   if (leadData.assessmentId) {
     const existing = await findLeadByAssessmentId(leadData.assessmentId);
     if (existing) {
       return existing;
     }
+  }
+
+  // The assessment_id guard above only catches a replay of the same
+  // assessment. It misses the common case: the quiz posting twice, or a
+  // customer pressing submit again, each time with a fresh assessment_id.
+  const duplicate = await findRecentDuplicateLead(leadData);
+  if (duplicate) {
+    console.info(
+      `[lead] duplicate submission within ${DUPLICATE_WINDOW_MINUTES}m for ${duplicate.work_email} — returning lead ${duplicate.id}`,
+    );
+    await trackMetricEvent("duplicate_lead_suppressed", {
+      lead_id: duplicate.id,
+      category: duplicate.selected_category,
+    });
+    return duplicate;
   }
 
   const qualification = deriveLeadQualityAndPrice(leadData);
@@ -89,6 +146,7 @@ async function findLeadByAssessmentId(assessmentId) {
 }
 
 module.exports = {
+  findRecentDuplicateLead,
   createLeadSubmission,
   findLeadByAssessmentId,
 };
