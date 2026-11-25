@@ -91,6 +91,8 @@ it means your Supabase schema has not been applied yet.
    - `sql/install_scheduler.sql` — the background task runner. Until this is
      applied, quotation expiry reminders and daily lead summaries do not run;
      `GET /api/health/scheduler` reports `installed: false`.
+   - `sql/install_calendar.sql` — working hours, blocked periods, bookings, and
+     the appointment reminder task. Run after install_scheduler.sql.
 
    **Check you are on the right project before running.** The SQL editor does
    not warn you, and running these against a different project creates tables

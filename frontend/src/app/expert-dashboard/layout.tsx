@@ -38,6 +38,7 @@ const navigation = [
   { name: "Cost Calculator", href: "/expert-dashboard/quickcost", icon: Calculator },
   { name: "Quotations", href: "/expert-dashboard/quotations", icon: FileText },
   { name: "Invoices", href: "/expert-dashboard/invoices", icon: Receipt },
+  { name: "Calendar", href: "/expert-dashboard/calendar", icon: CalendarDays },
   { name: "Customers", href: "/expert-dashboard/clients", icon: Users },
   { name: "Messages", href: "/expert-dashboard/messages", icon: MessageSquare },
   { name: "Reviews", href: "/expert-dashboard/reviews", icon: Star },

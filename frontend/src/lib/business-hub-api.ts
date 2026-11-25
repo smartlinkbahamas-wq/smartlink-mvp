@@ -8,6 +8,10 @@
 
 import { clearAdminSession } from "@/lib/admin-session";
 import type {
+  AvailabilityBlock,
+  Booking,
+  BookingConflict,
+  BookingStatus,
   Customer,
   CustomerHistory,
   CustomerInvoiceView,
@@ -18,6 +22,8 @@ import type {
   QuickCostEstimate,
   Quotation,
   QuotationInput,
+  DayAvailability,
+  WorkingHoursDay,
 } from "@/types";
 
 const DEFAULT_API_BASE = "http://localhost:5000/api";
@@ -473,5 +479,106 @@ export async function mergeCustomers(keepId: string, mergeId: string, token: str
     method: "POST",
     body: JSON.stringify({ keepId, mergeId }),
   });
+  return res.data;
+}
+
+// --- Calendar -------------------------------------------------------------
+
+export async function getWorkingHours(token: string) {
+  const res = await request<{ data: { workingHours: WorkingHoursDay[] } }>(
+    "/calendar/working-hours",
+    token,
+  );
+  return res.data.workingHours || [];
+}
+
+export async function setWorkingHours(
+  days: Array<{ weekday: number; isOpen: boolean; opensAt: string; closesAt: string }>,
+  token: string,
+) {
+  const res = await request<{ data: { workingHours: WorkingHoursDay[] } }>(
+    "/calendar/working-hours",
+    token,
+    { method: "PUT", body: JSON.stringify({ days }) },
+  );
+  return res.data.workingHours || [];
+}
+
+export async function listBookings(token: string, from: string, to: string) {
+  const params = new URLSearchParams({ from, to });
+  const res = await request<{ data: { bookings: Booking[] } }>(
+    `/calendar/bookings?${params}`,
+    token,
+  );
+  return res.data.bookings || [];
+}
+
+export interface BookingInput {
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  serviceName?: string;
+  scheduledOn: string;
+  startsAt: string;
+  durationMinutes: number;
+  status?: BookingStatus;
+  notes?: string;
+  allowOverlap?: boolean;
+}
+
+export async function createBooking(payload: BookingInput, token: string) {
+  return request<{
+    message: string;
+    data: { booking: Booking; conflicts: BookingConflict[] };
+  }>("/calendar/bookings", token, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateBooking(id: string, payload: BookingInput, token: string) {
+  return request<{
+    message: string;
+    data: { booking: Booking; conflicts: BookingConflict[] };
+  }>(`/calendar/bookings/${id}`, token, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function updateBookingStatus(id: string, status: BookingStatus, token: string) {
+  const res = await request<{ data: Booking }>(`/calendar/bookings/${id}/status`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+  return res.data;
+}
+
+export async function deleteBooking(id: string, token: string) {
+  return request<{ success: boolean }>(`/calendar/bookings/${id}`, token, { method: "DELETE" });
+}
+
+export async function listBlocks(token: string, from: string, to: string) {
+  const params = new URLSearchParams({ from, to });
+  const res = await request<{ data: { blocks: AvailabilityBlock[] } }>(
+    `/calendar/blocks?${params}`,
+    token,
+  );
+  return res.data.blocks || [];
+}
+
+export async function createBlock(
+  payload: { startsOn: string; endsOn?: string; startsAt?: string | null; endsAt?: string | null; reason?: string },
+  token: string,
+) {
+  const res = await request<{ data: AvailabilityBlock }>("/calendar/blocks", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
+export async function deleteBlock(id: string, token: string) {
+  return request<{ success: boolean }>(`/calendar/blocks/${id}`, token, { method: "DELETE" });
+}
+
+export async function getAvailability(token: string, date: string, duration?: number) {
+  const params = new URLSearchParams({ date });
+  if (duration) params.set("duration", String(duration));
+  const res = await request<{ data: DayAvailability }>(`/calendar/availability?${params}`, token);
   return res.data;
 }

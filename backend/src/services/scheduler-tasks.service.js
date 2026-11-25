@@ -250,14 +250,99 @@ async function dailyLeadSummary() {
   return `${sent} daily summary email(s) sent${quiet ? `, ${quiet} had nothing to report` : ""}`;
 }
 
+
+/**
+ * Reminds both sides about tomorrow's appointments.
+ *
+ * One reminder per booking, tracked by reminder_sent_at and cleared when an
+ * appointment is moved -- so rescheduling produces a fresh reminder for the
+ * new time rather than silence.
+ *
+ * The marker is written before sending, for the same reason as the others: a
+ * failed send costs one reminder, while the reverse order would re-send every
+ * hour after a crash.
+ */
+async function appointmentReminders() {
+  const supabase = requireSupabase();
+
+  // Tomorrow, in the provider's local terms. Bookings are stored as local date
+  // and clock time, so the comparison is a plain date rather than an instant.
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const { data: bookings, error } = await supabase
+    .from("bookings")
+    .select("id, expert_id, customer_name, customer_email, service_name, scheduled_on, starts_at, duration_minutes, status")
+    .in("status", ["pending", "confirmed"])
+    .eq("scheduled_on", tomorrow)
+    .is("reminder_sent_at", null)
+    .limit(BATCH_LIMIT);
+
+  if (error) {
+    // The calendar may not be installed on this environment yet, which is not
+    // an error worth recording against the task.
+    if (error.code === "42P01" || /schema cache/i.test(error.message || "")) return null;
+    throw new Error(`could not read bookings: ${error.message}`);
+  }
+  if (!bookings || bookings.length === 0) return null;
+
+  const expertIds = [...new Set(bookings.map((b) => b.expert_id))];
+  const { data: experts } = await supabase
+    .from("experts")
+    .select("expert_id, name, business_name, business_email")
+    .in("expert_id", expertIds);
+  const expertsById = new Map((experts || []).map((e) => [e.expert_id, e]));
+
+  let customerEmails = 0;
+  let providerEmails = 0;
+
+  for (const booking of bookings) {
+    await supabase
+      .from("bookings")
+      .update({ reminder_sent_at: new Date().toISOString() })
+      .eq("id", booking.id);
+
+    const expert = expertsById.get(booking.expert_id);
+    const businessName = expert?.business_name || expert?.name || "your provider";
+    const time = String(booking.starts_at).slice(0, 5);
+    const service = booking.service_name ? ` for ${booking.service_name}` : "";
+
+    if (booking.customer_email) {
+      await sendMail({
+        to: booking.customer_email,
+        subject: `Reminder: your appointment with ${businessName} tomorrow at ${time}`,
+        text: `This is a reminder of your appointment${service} with ${businessName} tomorrow, ${formatDate(booking.scheduled_on)}, at ${time}. If you need to change it, contact them directly.`,
+        html: `<p>This is a reminder of your appointment${service} with <strong>${businessName}</strong>
+               tomorrow, <strong>${formatDate(booking.scheduled_on)}</strong>, at <strong>${time}</strong>.</p>
+               <p style="color:#6B7280;font-size:13px;">If you need to change it, contact ${businessName} directly.</p>`,
+      });
+      customerEmails += 1;
+    }
+
+    if (expert?.business_email) {
+      await sendMail({
+        to: expert.business_email,
+        subject: `Tomorrow at ${time}: ${booking.customer_name}`,
+        text: `Reminder: you have ${booking.customer_name}${service} tomorrow, ${formatDate(booking.scheduled_on)}, at ${time}.`,
+        html: `<p>You have <strong>${booking.customer_name}</strong>${service} tomorrow,
+               <strong>${formatDate(booking.scheduled_on)}</strong>, at <strong>${time}</strong>.</p>`,
+      });
+      providerEmails += 1;
+    }
+  }
+
+  return `${bookings.length} appointment(s) tomorrow: ${customerEmails} customer and ${providerEmails} provider reminder(s) sent`;
+}
+
 /** Called once at boot. */
 function registerAll() {
   register("quotation_expiry_reminders", quotationExpiryReminders);
   register("daily_lead_summary", dailyLeadSummary);
+  register("appointment_reminders", appointmentReminders);
 }
 
 module.exports = {
   registerAll,
   quotationExpiryReminders,
   dailyLeadSummary,
+  appointmentReminders,
 };

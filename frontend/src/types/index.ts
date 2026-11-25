@@ -1012,3 +1012,78 @@ export interface CustomerHistory {
     expected_completion_date: string | null; created_at: string;
   }>;
 }
+
+// ---------------------------------------------------------------------------
+// Business calendar (Priority 3, phase 1)
+// ---------------------------------------------------------------------------
+
+// Stored as local date + clock time with no timezone: an appointment is
+// "three o'clock on Tuesday" to both parties, and storing it as an instant
+// would shift it across a daylight-saving boundary.
+export interface WorkingHoursDay {
+  expert_id?: string;
+  // 0 = Sunday, matching JavaScript's getDay().
+  weekday: number;
+  is_open: boolean;
+  opens_at: string;
+  closes_at: string;
+}
+
+export interface AvailabilityBlock {
+  id: string;
+  expert_id: string;
+  starts_on: string;
+  ends_on: string;
+  // Null on both means the whole day is blocked.
+  starts_at: string | null;
+  ends_at: string | null;
+  reason: string | null;
+  created_at: string;
+}
+
+export type BookingStatus = "pending" | "confirmed" | "completed" | "cancelled";
+
+export interface Booking {
+  id: string;
+  expert_id: string;
+  customer_id: string | null;
+  customer_name: string;
+  customer_email: string | null;
+  customer_phone: string | null;
+  service_menu_item_id: string | null;
+  service_name: string | null;
+  scheduled_on: string;
+  starts_at: string;
+  duration_minutes: number;
+  status: BookingStatus;
+  source: "smartlink" | "manual";
+  notes: string | null;
+  reminder_sent_at: string | null;
+  created_at: string;
+  // Server-derived, so the grid does not recompute per booking.
+  ends_at: string;
+  starts_at_minutes: number;
+}
+
+export interface BookingConflict {
+  id: string;
+  customerName: string;
+  serviceName: string | null;
+  startsAt: string;
+  endsAt: string;
+}
+
+export interface DayAvailability {
+  date: string;
+  weekday: number;
+  isWorkingDay: boolean;
+  opensAt?: string;
+  closesAt?: string;
+  reason?: string;
+  slots: Array<{
+    startsAt: string;
+    endsAt: string;
+    available: boolean;
+    reason: "booked" | "blocked" | null;
+  }>;
+}
