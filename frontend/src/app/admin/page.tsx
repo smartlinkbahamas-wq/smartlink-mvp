@@ -63,6 +63,8 @@ import {
   updateExpertState,
   reviewAdminExpertPackage,
   reviewAdminExpertIntro,
+  getSuspiciousLeadReports,
+  reviewSuspiciousLeadReport,
 } from "@/lib/admin-api";
 import { clearAdminSession, getAdminAccessToken, logoutCurrentSession } from "@/lib/admin-session";
 import { canAccessAdminArea } from "@/lib/role-guard";
@@ -80,6 +82,7 @@ import type {
   AdminModerationReviewRecord,
   AdminReportsSummary,
   AdminRole,
+  AdminSuspiciousLeadReport,
   AdminReviewsFeedbackSummary,
   AdminUserOption,
   AdminUserRoleRecord,
@@ -168,7 +171,22 @@ function mapAuditAction(action: string) {
 
 type TabKey = "overview" | "experts" | "leads" | "team" | "categories" | "settings" | "activity";
 type ExpertsSubTabKey = "directory" | "applications" | "reviews" | "performance";
-type LeadsSubTabKey = "assignment" | "escalation" | "overrides";
+const SUSPICIOUS_REASON_LABELS: Record<string, string> = {
+  fake_customer: "Suspected fake customer or impersonation",
+  payment_scam: "Suspicious payment request or possible scam",
+  repeated_abusive: "Repeated or abusive requests",
+  harassment: "Harassment or inappropriate communication",
+  other: "Other suspicious activity",
+};
+
+const REPORT_STATUS_LABELS: Record<string, string> = {
+  new: "Awaiting review",
+  under_review: "Under review",
+  actioned: "Actioned",
+  dismissed: "Dismissed",
+};
+
+type LeadsSubTabKey = "assignment" | "escalation" | "overrides" | "suspicious";
 type SettingsSubTabKey = "matching" | "pricing" | "fairness";
 const SEGMENT_OPTIONS = [
   { value: "business-owner", label: "Business owners" },
@@ -211,6 +229,8 @@ export default function AdminPage() {
   const [rankingConfig, setRankingConfig] = useState<Record<string, unknown> | null>(null);
   const [leadAssignments, setLeadAssignments] = useState<LeadAssignmentRecord[]>([]);
   const [leadEscalations, setLeadEscalations] = useState<AdminLeadEscalationRecord[]>([]);
+  const [suspiciousReports, setSuspiciousReports] = useState<AdminSuspiciousLeadReport[]>([]);
+  const [reviewNotesDraft, setReviewNotesDraft] = useState<Record<string, string>>({});
   const [matchOverrides, setMatchOverrides] = useState<AdminMatchOverrideRecord[]>([]);
   const [expertPerformance, setExpertPerformance] = useState<AdminExpertPerformanceRecord[]>([]);
   const [moderationReviews, setModerationReviews] = useState<AdminModerationReviewRecord[]>([]);
@@ -344,6 +364,7 @@ export default function AdminPage() {
     () => [
       { key: "assignment" as const, label: "Manual Assignment", enabled: can(me, "lead.assign") },
       { key: "escalation" as const, label: "No Match Escalation", enabled: can(me, "report.view") || can(me, "lead.assign") },
+      { key: "suspicious" as const, label: "Suspicious Reports", enabled: can(me, "lead.assign") },
       { key: "overrides" as const, label: "Match Overrides", enabled: can(me, "match.override.manage") },
     ],
     [me],
@@ -406,6 +427,7 @@ export default function AdminPage() {
         getReportsSummary(accessToken).then(setReports).catch(() => undefined),
         getLeadAssignments(accessToken).then(setLeadAssignments).catch(() => undefined),
         getLeadEscalations(accessToken).then(setLeadEscalations).catch(() => undefined),
+        getSuspiciousLeadReports(accessToken).then(setSuspiciousReports).catch(() => undefined),
         getExpertPerformance(accessToken).then(setExpertPerformance).catch(() => undefined),
         searchLeads(accessToken, "").then(setLeadOptions).catch(() => undefined),
         getModerationReviews(accessToken).then(setModerationReviews).catch(() => undefined),
@@ -1975,6 +1997,173 @@ export default function AdminPage() {
                       </article>
                     ))}
                     {leadAssignments.length === 0 ? <p className="text-sm text-[#6A7C98]">No lead assignments yet.</p> : null}
+                  </div>
+                ) : null}
+
+                {activeLeadsTab === "suspicious" ? (
+                  <div className="mt-6 rounded-2xl border border-[#E2EAF8] bg-[#FBFDFF] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-lg font-semibold">Suspicious Lead Reports</h3>
+                        <p className="mt-1 text-sm text-[#62728C]">
+                          Reported by providers. Declining a reported lead does not count against the
+                          provider who reported it.
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-[#FFF0F2] px-3 py-1 text-xs font-semibold text-[#C8234C]">
+                        {suspiciousReports.filter((report) => report.status === "new").length} awaiting review
+                      </span>
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      {suspiciousReports.map((report) => (
+                        <article key={report.id} className="rounded-xl border border-[#E1E9F8] bg-white p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold">
+                                {SUSPICIOUS_REASON_LABELS[report.reason] || report.reason}
+                              </p>
+                              <p className="mt-1 text-xs text-[#62728C]">
+                                Reported by {report.expert_name || "Unknown provider"}
+                                {report.expert_organization ? ` (${report.expert_organization})` : ""} •{" "}
+                                {formatDateTime(report.created_at)}
+                              </p>
+                            </div>
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                report.status === "new"
+                                  ? "bg-[#FFF0F2] text-[#C8234C]"
+                                  : report.status === "under_review"
+                                    ? "bg-[#FFF7E6] text-[#A3620A]"
+                                    : report.status === "actioned"
+                                      ? "bg-[#ECFDF3] text-[#177245]"
+                                      : "bg-[#EEF3FF] text-[#2759C9]"
+                              }`}
+                            >
+                              {REPORT_STATUS_LABELS[report.status] || report.status}
+                            </span>
+                          </div>
+
+                          <div className="mt-3 rounded-lg bg-[#F7FAFF] p-3 text-xs text-[#4A5A75]">
+                            <p>
+                              <span className="font-semibold">Customer:</span>{" "}
+                              {report.customer_name || "Name not recorded"}
+                              {report.customer_email ? ` — ${report.customer_email}` : ""}
+                            </p>
+                            {report.lead_category ? (
+                              <p className="mt-1">
+                                <span className="font-semibold">Category:</span> {report.lead_category}
+                              </p>
+                            ) : null}
+                            {report.notes ? (
+                              <p className="mt-1">
+                                <span className="font-semibold">Provider&apos;s note:</span> {report.notes}
+                              </p>
+                            ) : null}
+                          </div>
+
+                          {report.status === "actioned" || report.status === "dismissed" ? (
+                            <p className="mt-3 text-xs text-[#62728C]">
+                              {report.review_outcome ? `Outcome: ${report.review_outcome}. ` : ""}
+                              {report.review_notes || ""}
+                              {report.reviewed_at ? ` (${formatDateTime(report.reviewed_at)})` : ""}
+                            </p>
+                          ) : (
+                            <div className="mt-3 space-y-2">
+                              <textarea
+                                value={reviewNotesDraft[report.id] || ""}
+                                onChange={(event) =>
+                                  setReviewNotesDraft((current) => ({
+                                    ...current,
+                                    [report.id]: event.target.value,
+                                  }))
+                                }
+                                rows={2}
+                                placeholder="Internal review notes (what you found, who you contacted)"
+                                className="w-full rounded-lg border border-[#D6E1F4] p-2 text-sm"
+                              />
+                              <div className="flex flex-wrap gap-2">
+                                {report.status === "new" ? (
+                                  <button
+                                    type="button"
+                                    className="rounded-lg border border-[#D6E1F4] bg-white px-3 py-1.5 text-sm font-semibold text-[#2E67E8]"
+                                    onClick={() =>
+                                      runAction(
+                                        () =>
+                                          reviewSuspiciousLeadReport(token, report.id, {
+                                            status: "under_review",
+                                            reviewNotes: reviewNotesDraft[report.id] || undefined,
+                                          }),
+                                        "Report marked as under review.",
+                                      )
+                                    }
+                                  >
+                                    Start review
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="rounded-lg bg-[#C8234C] px-3 py-1.5 text-sm font-semibold text-white"
+                                  onClick={() =>
+                                    runAction(
+                                      () =>
+                                        reviewSuspiciousLeadReport(token, report.id, {
+                                          status: "actioned",
+                                          reviewOutcome: "Customer restricted",
+                                          reviewNotes: reviewNotesDraft[report.id] || undefined,
+                                        }),
+                                      "Report actioned: customer restricted.",
+                                    )
+                                  }
+                                >
+                                  Restrict customer
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-lg bg-[#A3620A] px-3 py-1.5 text-sm font-semibold text-white"
+                                  onClick={() =>
+                                    runAction(
+                                      () =>
+                                        reviewSuspiciousLeadReport(token, report.id, {
+                                          status: "actioned",
+                                          reviewOutcome: "Customer warned",
+                                          reviewNotes: reviewNotesDraft[report.id] || undefined,
+                                        }),
+                                      "Report actioned: customer warned.",
+                                    )
+                                  }
+                                >
+                                  Warn customer
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-lg border border-[#D6E1F4] bg-white px-3 py-1.5 text-sm font-semibold text-[#5E6F8A]"
+                                  onClick={() =>
+                                    runAction(
+                                      () =>
+                                        reviewSuspiciousLeadReport(token, report.id, {
+                                          status: "dismissed",
+                                          reviewOutcome: "No action required",
+                                          reviewNotes: reviewNotesDraft[report.id] || undefined,
+                                        }),
+                                      "Report dismissed.",
+                                    )
+                                  }
+                                >
+                                  Dismiss
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </article>
+                      ))}
+
+                      {suspiciousReports.length === 0 ? (
+                        <p className="text-sm text-[#6A7C98]">
+                          No suspicious leads have been reported.
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
 
