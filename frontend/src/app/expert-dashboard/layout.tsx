@@ -14,6 +14,7 @@ import {
   User,
   ShieldCheck,
   CalendarDays,
+  Bell,
   Settings,
   CreditCard,
   BadgeCheck,
@@ -34,6 +35,7 @@ const navigation = [
   { name: "Profile", href: "/expert-dashboard/profile", icon: User },
   { name: "Verification", href: "/expert-dashboard/verification", icon: ShieldCheck },
   { name: "Availability", href: "/expert-dashboard/availability", icon: CalendarDays },
+  { name: "Notifications", href: "/expert-dashboard/notifications", icon: Bell },
   { name: "Security Settings", href: "/expert-dashboard/security", icon: Settings },
   { name: "Billing", href: "/expert-dashboard/billing", icon: CreditCard },
 ];

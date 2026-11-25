@@ -14,10 +14,12 @@ import {
   ArrowRight,
   Sparkles,
   MapPin,
-  DollarSign
+  DollarSign,
+  BellOff
 } from "lucide-react";
 import Link from "next/link";
-import { getExpertDashboardData } from "@/lib/backend-api";
+import { getExpertDashboardData, getMyNotificationPreferences } from "@/lib/backend-api";
+import type { LeadAlertMode } from "@/lib/backend-api";
 import { getAdminAccessToken, getSessionMe, clearAdminSession } from "@/lib/admin-session";
 import { canUseExpertSection } from "@/lib/role-guard";
 import { useRouter } from "next/navigation";
@@ -29,6 +31,7 @@ export default function ExpertDashboardOverview() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   // Bumped by "Try again" to re-run the loader.
   const [reloadKey, setReloadKey] = useState(0);
+  const [leadAlerts, setLeadAlerts] = useState<LeadAlertMode | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -61,6 +64,15 @@ export default function ExpertDashboardOverview() {
         if (!active) return;
 
         setData(response);
+
+        // Secondary, and deliberately in its own try/catch: the dashboard must
+        // still render if this fails. It only decides whether to show a banner.
+        try {
+          const prefs = await getMyNotificationPreferences(token);
+          if (active) setLeadAlerts(prefs.data.preferences.lead_alerts);
+        } catch (prefsError) {
+          console.warn("Could not read notification preferences:", prefsError);
+        }
       } catch (error: any) {
         console.error("Failed to load dashboard data:", error);
         const msg = String(error?.message || error).toLowerCase();
@@ -131,6 +143,28 @@ export default function ExpertDashboardOverview() {
         <div className="absolute right-0 top-0 -z-0 h-48 w-48 rounded-full bg-blue-500/30 blur-3xl" />
         <div className="absolute -bottom-8 -right-8 -z-0 h-48 w-48 rounded-full bg-purple-400/40 blur-3xl" />
       </div>
+
+      {/* Lead alerts off: required to be visible on the dashboard, because a
+          provider who has silenced alerts will otherwise assume no work came
+          in rather than that nobody told them. */}
+      {leadAlerts === "off" ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-5 py-4 dark:border-amber-900/50 dark:bg-amber-900/20"
+        >
+          <BellOff className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+          <p className="flex-1 text-sm text-amber-900 dark:text-amber-200">
+            <strong className="font-semibold">Lead alerts are turned off.</strong>{" "}
+            New opportunities will not be emailed to you — check this dashboard to see them.
+          </p>
+          <Link
+            href="/expert-dashboard/notifications"
+            className="shrink-0 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700"
+          >
+            Change setting
+          </Link>
+        </div>
+      ) : null}
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
