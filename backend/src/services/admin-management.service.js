@@ -494,7 +494,9 @@ async function assignLeadManually(req, actor, payload) {
   const supabase = requireSupabase();
   const { data: lead, error: leadError } = await supabase
     .from("lead_submissions")
-    .select("id, lead_quality_tag, lead_tier, urgency_preference, budget_preference, intent_type")
+    .select(
+      "id, lead_quality_tag, lead_tier, urgency_preference, budget_preference, intent_type, full_name, work_email, phone_number, selected_category, assessment_id",
+    )
     .eq("id", payload.leadId)
     .maybeSingle();
 
@@ -544,6 +546,69 @@ async function assignLeadManually(req, actor, payload) {
     throw new AppError("Failed to create lead assignment.", 500, error.message);
   }
 
+  // An assignment on its own only wrote an audit row: it never created an
+  // introduction request, so the expert never saw the lead in their
+  // opportunities and the admin "no match leads" count treated it as
+  // unmatched. Create the opportunity too, deduping so re-assigning the same
+  // lead to the same expert does not produce a second one.
+  let introduction = null;
+  const { data: existingIntro } = await supabase
+    .from("introduction_requests")
+    .select("id")
+    .eq("lead_id", payload.leadId)
+    .eq("expert_id", payload.expertId)
+    .maybeSingle();
+
+  if (existingIntro) {
+    introduction = existingIntro;
+  } else {
+    const { data: createdIntro, error: introError } = await supabase
+      .from("introduction_requests")
+      .insert({
+        lead_id: payload.leadId,
+        assessment_id: lead.assessment_id || null,
+        expert_id: payload.expertId,
+        expert_name: expert.name,
+        lead_name: lead.full_name,
+        lead_email: lead.work_email,
+        lead_phone: lead.phone_number || null,
+        category: lead.selected_category || null,
+        urgency_level: lead.urgency_preference || null,
+        budget_preference: lead.budget_preference || null,
+        lead_tier: lead.lead_tier || null,
+        expert_tier: expert.tier || null,
+        billable: lead.lead_tier === "premium",
+        status: "submitted",
+      })
+      .select("id")
+      .single();
+
+    if (introError) {
+      // The assignment itself succeeded and is already audited, so this does
+      // not fail the request — but it must be visible, because the expert
+      // will not see the lead.
+      console.error(
+        `[admin] lead ${payload.leadId} assigned to ${payload.expertId} but the introduction request failed:`,
+        introError.message,
+      );
+    } else {
+      introduction = createdIntro;
+      const { recordStageEvent, SUBJECT_TYPES, ACTOR_TYPES } = require("./pipeline.service");
+      await recordStageEvent({
+        subjectType: SUBJECT_TYPES.INTRODUCTION_REQUEST,
+        subjectId: createdIntro.id,
+        expertId: payload.expertId,
+        leadId: payload.leadId,
+        fromStage: null,
+        toStage: "submitted",
+        actorType: ACTOR_TYPES.ADMIN,
+        actorUserId: actor.userId,
+        notes: "Created from a manual administrator assignment.",
+        source: "admin_assigned",
+      });
+    }
+  }
+
   await appendAdminAuditLog({
     req,
     actor,
@@ -551,11 +616,11 @@ async function assignLeadManually(req, actor, payload) {
     targetType: "lead",
     targetId: payload.leadId,
     previousValue: null,
-    newValue: data,
+    newValue: { ...data, introduction_request_id: introduction?.id || null },
     notes: payload.notes || payload.assignmentReason || null,
   });
 
-  return data;
+  return { ...data, introduction_request_id: introduction?.id || null };
 }
 
 async function listLeadAssignments(limit = 200) {
@@ -1444,7 +1509,7 @@ async function getAdminReportsSummary() {
     supabase.from("expert_reviews").select("feedback_id, review_status, is_suspicious"),
     supabase.from("experts").select("expert_id, matching_visibility, tier, average_response_time"),
     supabase.from("lead_assignments").select("lead_id"),
-    supabase.from("introduction_requests").select("id, status, created_at"),
+    supabase.from("introduction_requests").select("id, lead_id, status, created_at"),
   ]);
 
   if (applications.error) throw new AppError("Failed to build reports summary (applications).", 500, applications.error.message);
@@ -1478,7 +1543,29 @@ async function getAdminReportsSummary() {
   }).length;
 
   const connectedIntroductions = introductionRows.filter((row) => row.status === "accepted").length;
-  const conversionRate = leadRows.length > 0 ? (connectedIntroductions / leadRows.length) * 100 : 0;
+
+  // The previous figure divided accepted INTRODUCTIONS by total LEADS. One
+  // lead can produce several introductions, so the numerator and denominator
+  // counted different things and the result was not a rate of anything.
+  //
+  // Two honest rates replace it, each over its own denominator:
+  //   - inquiry  -> reached an expert   (leads that produced any introduction)
+  //   - reached  -> accepted by expert  (introductions an expert took on)
+  // Both are returned with their numerator and denominator so the screen can
+  // show "14 of 61" rather than a bare percentage.
+  const leadIdsWithIntroduction = new Set(
+    introductionRows.map((row) => row.lead_id).filter(Boolean),
+  );
+  const leadsReachingAnExpert = leadIdsWithIntroduction.size;
+
+  const asRate = (numerator, denominator) => ({
+    numerator,
+    denominator,
+    percent: denominator > 0 ? Number(((numerator / denominator) * 100).toFixed(2)) : null,
+  });
+
+  const inquiryToExpert = asRate(leadsReachingAnExpert, leadRows.length);
+  const expertAcceptance = asRate(connectedIntroductions, introductionRows.length);
 
   const expertRows = experts.data || [];
   const averageResponseTimeHours =
@@ -1509,7 +1596,12 @@ async function getAdminReportsSummary() {
     totalExperts: expertRows.length,
     activeExperts: expertRows.filter((row) => row.matching_visibility !== "hidden").length,
     featuredExperts: expertRows.filter((row) => row.tier === "featured").length,
-    conversionRate: Number(conversionRate.toFixed(2)),
+    // Retained so nothing breaks while the dashboard moves over, but it is
+    // now the acceptance rate, which at least divides like by like.
+    conversionRate: expertAcceptance.percent ?? 0,
+    inquiryToExpertRate: inquiryToExpert,
+    expertAcceptanceRate: expertAcceptance,
+    leadsReachingAnExpert,
     averageResponseTimeHours: Number(averageResponseTimeHours.toFixed(2)),
     introductionsCount: introductionRows.length,
     connectedIntroductionsCount: connectedIntroductions,

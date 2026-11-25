@@ -640,7 +640,11 @@ export default function AdminPage() {
   const totalLeadsMonthToDate = Math.max(0, reports?.totalLeadsMonthToDate ?? totalLeads);
   const highValueLeads = Math.max(0, reports?.highValueLeads ?? 0);
   const noMatchLeads = Math.max(0, reports?.noMatchLeads ?? leadEscalations.length);
-  const conversionRate = Number(reports?.conversionRate ?? 0);
+  // Two rates over their own denominators, replacing the single figure that
+  // divided accepted introductions by total leads (different units).
+  const inquiryToExpert = reports?.inquiryToExpertRate ?? null;
+  const expertAcceptance = reports?.expertAcceptanceRate ?? null;
+  const conversionRate = Number(expertAcceptance?.percent ?? reports?.conversionRate ?? 0);
   const averageResponseTimeHours = Number(reports?.averageResponseTimeHours ?? 0);
   const connectedIntroductions = Math.max(0, reports?.connectedIntroductionsCount ?? 0);
   const introductionsCount = Math.max(0, reports?.introductionsCount ?? 0);
@@ -850,11 +854,28 @@ export default function AdminPage() {
                       color: "from-[#2E67E8] to-[#49D2D6]",
                     },
                     {
-                      label: "Conversion Rate",
-                      value: `${conversionRate}%`,
-                      helper: `${connectedIntroductions}/${introductionsCount || 0} connections`,
-                      bar: Math.min(100, Math.max(0, Math.round(conversionRate))),
+                      label: "Inquiries Reaching an Expert",
+                      value:
+                        inquiryToExpert?.percent === null || inquiryToExpert === null
+                          ? "—"
+                          : `${inquiryToExpert.percent}%`,
+                      helper: inquiryToExpert
+                        ? `${inquiryToExpert.numerator} of ${inquiryToExpert.denominator} inquiries`
+                        : "No inquiries yet",
+                      bar: Math.min(100, Math.max(0, Math.round(inquiryToExpert?.percent ?? 0))),
                       color: "from-[#00A97F] to-[#5BD4A8]",
+                    },
+                    {
+                      label: "Accepted by an Expert",
+                      value:
+                        expertAcceptance?.percent === null || expertAcceptance === null
+                          ? "—"
+                          : `${expertAcceptance.percent}%`,
+                      helper: expertAcceptance
+                        ? `${expertAcceptance.numerator} of ${expertAcceptance.denominator} introductions`
+                        : "No introductions yet",
+                      bar: Math.min(100, Math.max(0, Math.round(expertAcceptance?.percent ?? 0))),
+                      color: "from-[#2E67E8] to-[#49D2D6]",
                     },
                     {
                       label: "Average Response Time",

@@ -501,6 +501,13 @@ export interface AdminAuditLogRecord {
   notes?: string | null;
 }
 
+export interface ConversionRate {
+  numerator: number;
+  denominator: number;
+  /** null when the denominator is zero — never shown as 0%. */
+  percent: number | null;
+}
+
 export interface AdminReportsSummary {
   totalApplications: number;
   totalLeads: number;
@@ -508,7 +515,12 @@ export interface AdminReportsSummary {
   totalLeadsMonthToDate?: number;
   highValueLeads: number;
   noMatchLeads?: number;
+  /** @deprecated Now the expert-acceptance rate. Prefer the two fields below. */
   conversionRate?: number;
+  /** A rate always carries its denominator, so the UI can show "2 of 9". */
+  inquiryToExpertRate?: ConversionRate;
+  expertAcceptanceRate?: ConversionRate;
+  leadsReachingAnExpert?: number;
   averageResponseTimeHours?: number;
   introductionsCount?: number;
   connectedIntroductionsCount?: number;
