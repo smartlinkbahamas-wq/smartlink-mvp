@@ -685,3 +685,297 @@ export interface ServiceMenuItemInput {
   bookable?: boolean;
   isActive?: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Business Hub (Priority 2)
+// ---------------------------------------------------------------------------
+
+export type CostKind = "material" | "labour" | "subcontractor" | "transport" | "equipment" | "other";
+
+export interface CostItem {
+  kind: CostKind;
+  label: string;
+  // For labour this is hours; for materials, units. The arithmetic is the same.
+  quantity: number;
+  unitCost: number;
+  lineCost?: number;
+}
+
+export interface QuickCostEstimate {
+  id: string;
+  expert_id: string;
+  job_name: string;
+  customer_summary: string | null;
+  internal_notes: string | null;
+  cost_items: CostItem[];
+  overhead_amount: number;
+  target_margin_percent: number;
+  items_cost: number;
+  total_cost: number;
+  suggested_price: number;
+  final_price: number;
+  profit: number;
+  margin_percent: number;
+  markup_percent: number;
+  actual_cost: number | null;
+  actual_revenue: number | null;
+  currency: string;
+  status: "draft" | "quoted" | "won" | "lost" | "archived";
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * A quotation or invoice line.
+ *
+ * An informational line carries a `value` and no figures: a florist's event
+ * date or flower colours appear on the document without affecting the price.
+ */
+export interface DocumentLineItem {
+  label: string;
+  description?: string | null;
+  quantity?: number | null;
+  unitPrice?: number | null;
+  unit?: string | null;
+  lineTotal?: number;
+  informational?: boolean;
+  value?: string | null;
+}
+
+export interface BusinessIdentitySnapshot {
+  business_name: string | null;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  logo_url: string | null;
+  vat_registered: boolean;
+  vat_number: string | null;
+  captured_at?: string;
+}
+
+export type QuotationStatus =
+  | "draft"
+  | "sent"
+  | "approved"
+  | "declined"
+  | "changes_requested"
+  | "superseded";
+
+export interface Quotation {
+  id: string;
+  expert_id: string;
+  quotation_number: number;
+  reference: string;
+  lead_id: string | null;
+  source_estimate_id: string | null;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string | null;
+  job_name: string;
+  customer_summary: string | null;
+  terms: string | null;
+  line_items: DocumentLineItem[];
+  discount_percent: number;
+  discount_amount: number;
+  discount_reason: string | null;
+  tax_rate_percent: number;
+  tax_label: string;
+  additional_costs: number;
+  additional_costs_label: string;
+  subtotal: number;
+  discount_total: number;
+  taxable_amount: number;
+  tax_amount: number;
+  total: number;
+  currency: string;
+  validity_days: number;
+  valid_until: string | null;
+  status: QuotationStatus;
+  version: number;
+  business_identity: BusinessIdentitySnapshot | null;
+  sent_at: string | null;
+  approved_at: string | null;
+  approval_method: string | null;
+  responded_at: string | null;
+  customer_message: string | null;
+  created_at: string;
+  updated_at: string;
+  // Server-derived. Expiry is computed, never stored.
+  effective_status: QuotationStatus | "expired";
+  is_expired: boolean;
+  is_locked: boolean;
+}
+
+export interface QuotationInput {
+  customerName: string;
+  customerEmail: string;
+  customerPhone?: string;
+  jobName: string;
+  customerSummary?: string;
+  terms?: string;
+  lineItems: DocumentLineItem[];
+  discountPercent?: number;
+  discountAmount?: number;
+  discountReason?: string;
+  taxRatePercent?: number;
+  taxLabel?: string;
+  additionalCosts?: number;
+  additionalCostsLabel?: string;
+  validityDays?: number;
+  sourceEstimateId?: string | null;
+}
+
+export interface InvoicePayment {
+  id: string;
+  amount: number;
+  paid_on: string;
+  method: string | null;
+  reference: string | null;
+  notes: string | null;
+}
+
+export interface Invoice {
+  id: string;
+  expert_id: string;
+  invoice_number: number;
+  reference: string;
+  quotation_id: string | null;
+  quotation_reference: string | null;
+  customer_name: string;
+  customer_email: string;
+  job_name: string;
+  customer_summary: string | null;
+  terms: string | null;
+  line_items: DocumentLineItem[];
+  discount_total: number;
+  discount_reason: string | null;
+  tax_rate_percent: number;
+  tax_label: string;
+  tax_amount: number;
+  additional_costs: number;
+  additional_costs_label: string;
+  subtotal: number;
+  total: number;
+  currency: string;
+  deposit_amount: number;
+  payment_terms: string | null;
+  payment_instructions: string | null;
+  issue_date: string;
+  due_date: string | null;
+  status: "draft" | "sent" | "cancelled";
+  business_identity: BusinessIdentitySnapshot | null;
+  created_at: string;
+  // Derived from the payment rows and the due date on every read, never stored.
+  payments: InvoicePayment[];
+  paid: number;
+  balance: number;
+  paymentStatus: "unpaid" | "partially_paid" | "paid";
+  isOverdue: boolean;
+  displayStatus: string;
+}
+
+export type JobStatus =
+  | "awarded"
+  | "scheduled"
+  | "in_progress"
+  | "delayed"
+  | "provider_completed"
+  | "customer_confirmed"
+  | "disputed"
+  | "cancelled"
+  | "unverifiable";
+
+export interface Job {
+  id: string;
+  expert_id: string;
+  job_number: number;
+  reference: string;
+  quotation_id: string | null;
+  customer_name: string;
+  customer_email: string | null;
+  customer_phone: string | null;
+  job_name: string;
+  description: string | null;
+  agreed_price: number | null;
+  currency: string;
+  // Recorded at creation and never changed: it is what separates work the
+  // platform produced from work a provider merely recorded.
+  source: "smartlink" | "provider_entered";
+  status: JobStatus;
+  expected_completion_date: string | null;
+  original_expected_completion_date: string | null;
+  actual_completion_date: string | null;
+  completion_notes: string | null;
+  created_at: string;
+  overdue_days: number;
+  is_overdue: boolean;
+  work_started: boolean;
+}
+
+export interface JobDateRevision {
+  id: string;
+  previous_date: string | null;
+  requested_date: string;
+  reason: string;
+  approval_status: "auto" | "pending" | "approved" | "rejected";
+  reviewed_at: string | null;
+  review_notes: string | null;
+  created_at: string;
+}
+
+/** The customer's view of a quotation. Deliberately narrower than Quotation. */
+export interface CustomerQuotationView {
+  reference: string;
+  version: number;
+  jobName: string;
+  customerSummary: string | null;
+  customerName: string;
+  terms: string | null;
+  lineItems: DocumentLineItem[];
+  subtotal: number;
+  discountPercent: number;
+  discountTotal: number;
+  discountReason: string | null;
+  taxLabel: string;
+  taxRatePercent: number;
+  taxAmount: number;
+  additionalCostsLabel: string;
+  additionalCosts: number;
+  total: number;
+  currency: string;
+  validUntil: string | null;
+  status: string;
+  business: BusinessIdentitySnapshot | null;
+}
+
+export interface CustomerInvoiceView {
+  reference: string;
+  quotationReference: string | null;
+  jobName: string;
+  customerName: string;
+  customerSummary: string | null;
+  terms: string | null;
+  lineItems: DocumentLineItem[];
+  subtotal: number;
+  discountTotal: number;
+  discountReason: string | null;
+  taxLabel: string;
+  taxRatePercent: number;
+  taxAmount: number;
+  additionalCostsLabel: string;
+  additionalCosts: number;
+  total: number;
+  depositAmount: number;
+  amountPaid: number;
+  balanceDue: number;
+  paymentStatus: string;
+  isOverdue: boolean;
+  issueDate: string;
+  dueDate: string | null;
+  paymentTerms: string | null;
+  paymentInstructions: string | null;
+  currency: string;
+  business: BusinessIdentitySnapshot | null;
+  paymentHistory: Array<{ amount: number; paidOn: string; method: string | null }>;
+}
