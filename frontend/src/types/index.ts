@@ -1176,3 +1176,31 @@ export interface JobNeedingAttention {
   needs_telephone_verification: boolean;
   can_mark_unverifiable: boolean;
 }
+
+/** A requested change to a job's expected completion date, awaiting review. */
+export interface PendingDateRevision {
+  id: string;
+  job_id: string;
+  expert_id: string;
+  previous_date: string | null;
+  requested_date: string;
+  reason: string;
+  approval_status: "auto" | "pending" | "approved" | "rejected";
+  created_at: string;
+  provider_name: string | null;
+  // How much later the provider is asking for — the figure the decision
+  // actually turns on.
+  days_later: number | null;
+  job: {
+    id: string;
+    reference: string;
+    job_name: string;
+    customer_name: string;
+    status: string;
+    expected_completion_date: string | null;
+    original_expected_completion_date: string | null;
+    agreed_price: number | null;
+    currency: string;
+    source: string;
+  } | null;
+}

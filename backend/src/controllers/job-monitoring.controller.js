@@ -220,6 +220,47 @@ async function postAdminNote(req, res) {
   return res.status(201).json({ success: true, message: "Note saved.", data: saved });
 }
 
+
+// --- Date change approval (administrator) ----------------------------------
+
+const reviewSchema = z.object({
+  decision: z.enum(["approved", "rejected"]),
+  // Required on a rejection: a provider told "no" with no reason cannot act on
+  // it, and the refusal becomes a complaint rather than a decision.
+  notes: z.string().trim().max(2000).optional().or(z.literal("")),
+}).superRefine((value, ctx) => {
+  if (value.decision === "rejected" && !value.notes) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["notes"],
+      message: "Give a reason when rejecting a date change.",
+    });
+  }
+});
+
+async function getPendingDateRevisions(req, res) {
+  const revisions = await monitoring.listPendingDateRevisions();
+  return res.json({ success: true, data: { revisions } });
+}
+
+async function patchDateRevision(req, res) {
+  const payload = parse(reviewSchema, req.body, "Check the decision and try again.");
+  const revision = await monitoring.reviewDateRevision(req.params.revisionId, {
+    decision: payload.decision,
+    notes: payload.notes,
+    reviewedByUserId: req.adminUser?.userId || req.user?.userId || null,
+  });
+
+  return res.json({
+    success: true,
+    message:
+      payload.decision === "approved"
+        ? "Date change approved. The job now runs to the new date."
+        : "Date change rejected. The original date stands.",
+    data: revision,
+  });
+}
+
 module.exports = {
   getJobForConfirmation,
   submitConfirmation,
@@ -230,4 +271,6 @@ module.exports = {
   postVerificationAttempt,
   postMarkUnverifiable,
   postAdminNote,
+  getPendingDateRevisions,
+  patchDateRevision,
 };

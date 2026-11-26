@@ -72,6 +72,8 @@ import {
   markJobUnverifiable,
   addJobAdminNote,
   updateMonitoringSettings,
+  getPendingDateRevisions,
+  reviewDateRevision,
 } from "@/lib/admin-api";
 import { clearAdminSession, getAdminAccessToken, logoutCurrentSession } from "@/lib/admin-session";
 import { canAccessAdminArea } from "@/lib/role-guard";
@@ -102,6 +104,7 @@ import type {
   JobVerificationAttempt,
   JobAdminNote,
   VerificationOutcome,
+  PendingDateRevision,
 } from "@/types";
 
 function can(me: AdminMe | null, permission: string) {
@@ -294,6 +297,8 @@ export default function AdminPage() {
   const [jobNoteDraft, setJobNoteDraft] = useState("");
   const [callOutcome, setCallOutcome] = useState<VerificationOutcome>("no_answer");
   const [callNotes, setCallNotes] = useState("");
+  const [pendingDateRevisions, setPendingDateRevisions] = useState<PendingDateRevision[]>([]);
+  const [revisionNotes, setRevisionNotes] = useState<Record<string, string>>({});
   const [reviewNotesDraft, setReviewNotesDraft] = useState<Record<string, string>>({});
   const [matchOverrides, setMatchOverrides] = useState<AdminMatchOverrideRecord[]>([]);
   const [expertPerformance, setExpertPerformance] = useState<AdminExpertPerformanceRecord[]>([]);
@@ -505,6 +510,7 @@ export default function AdminPage() {
             setMonitoringSettings(result.settings || null);
           })
           .catch(() => undefined),
+        getPendingDateRevisions(accessToken).then(setPendingDateRevisions).catch(() => undefined),
         getExpertPerformance(accessToken).then(setExpertPerformance).catch(() => undefined),
         searchLeads(accessToken, "").then(setLeadOptions).catch(() => undefined),
         getModerationReviews(accessToken).then(setModerationReviews).catch(() => undefined),
@@ -2470,6 +2476,126 @@ export default function AdminPage() {
                     {monitoringSettings.unverifiable_after_days} day(s) of silence ·{" "}
                     {monitoringSettings.required_phone_attempts} attempt(s) before a job may be marked unverifiable.
                   </p>
+                ) : null}
+
+                {/* Date changes requested after work started. Revisions made
+                    before work begins are automatic and never appear here. */}
+                {pendingDateRevisions.length > 0 ? (
+                  <div className="mt-4 rounded-2xl border border-[#FFE2B8] bg-[#FFFBF4] p-4">
+                    <h3 className="text-sm font-semibold text-[#A3620A]">
+                      Date changes awaiting approval ({pendingDateRevisions.length})
+                    </h3>
+                    <p className="mt-1 text-xs text-[#8A6520]">
+                      Work has already started on these, so the provider needs approval. The current
+                      date stands until you decide, so the overdue figures do not move in the
+                      meantime.
+                    </p>
+
+                    <div className="mt-3 space-y-3">
+                      {pendingDateRevisions.map((revision) => (
+                        <article key={revision.id} className="rounded-xl border border-[#F0DFC4] bg-white p-3">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold">
+                                {revision.job?.job_name || "Job"}{" "}
+                                <span className="font-normal text-[#62728C]">
+                                  {revision.job?.reference ? `· ${revision.job.reference}` : ""}
+                                </span>
+                              </p>
+                              <p className="mt-1 text-xs text-[#62728C]">
+                                {revision.provider_name || revision.expert_id}
+                                {revision.job?.customer_name ? ` · customer: ${revision.job.customer_name}` : ""}
+                              </p>
+                              <p className="mt-1 text-sm text-[#4A5A75]">
+                                {formatDateOnly(revision.previous_date)} →{" "}
+                                <strong>{formatDateOnly(revision.requested_date)}</strong>
+                                {revision.days_later !== null ? (
+                                  <span
+                                    className={`ml-2 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                      revision.days_later > 14
+                                        ? "bg-[#FFF0F2] text-[#C8234C]"
+                                        : "bg-[#FFF7E6] text-[#A3620A]"
+                                    }`}
+                                  >
+                                    {revision.days_later > 0
+                                      ? `${revision.days_later} day(s) later`
+                                      : `${Math.abs(revision.days_later)} day(s) earlier`}
+                                  </span>
+                                ) : null}
+                              </p>
+                              <p className="mt-1 rounded-lg bg-[#F7FAFF] px-3 py-2 text-xs text-[#4A5A75]">
+                                <span className="font-semibold">Reason given:</span> {revision.reason}
+                              </p>
+                              {revision.job?.original_expected_completion_date &&
+                              revision.job.original_expected_completion_date !== revision.previous_date ? (
+                                <p className="mt-1 text-xs text-[#8794A8]">
+                                  Originally due {formatDateOnly(revision.job.original_expected_completion_date)} —
+                                  this job has already moved once.
+                                </p>
+                              ) : null}
+                            </div>
+                            <p className="text-xs text-[#8794A8]">
+                              Requested {formatDateTime(revision.created_at)}
+                            </p>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap items-end gap-2">
+                            <label className="sr-only" htmlFor={`rev-${revision.id}`}>
+                              Reason for your decision
+                            </label>
+                            <input
+                              id={`rev-${revision.id}`}
+                              value={revisionNotes[revision.id] || ""}
+                              onChange={(event) =>
+                                setRevisionNotes((current) => ({
+                                  ...current,
+                                  [revision.id]: event.target.value,
+                                }))
+                              }
+                              placeholder="Reason (required to reject)"
+                              className="h-10 min-w-[16rem] flex-1 rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                            />
+                            <button
+                              type="button"
+                              className="h-10 rounded-xl bg-[#177245] px-4 text-sm font-semibold text-white"
+                              onClick={() =>
+                                runAction(async () => {
+                                  await reviewDateRevision(token, revision.id, {
+                                    decision: "approved",
+                                    notes: revisionNotes[revision.id]?.trim() || undefined,
+                                  });
+                                  setPendingDateRevisions(await getPendingDateRevisions(token));
+                                }, "Date change approved.")
+                              }
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!revisionNotes[revision.id]?.trim()}
+                              className="h-10 rounded-xl bg-[#C8234C] px-4 text-sm font-semibold text-white disabled:opacity-50"
+                              onClick={() =>
+                                runAction(async () => {
+                                  await reviewDateRevision(token, revision.id, {
+                                    decision: "rejected",
+                                    notes: revisionNotes[revision.id].trim(),
+                                  });
+                                  setPendingDateRevisions(await getPendingDateRevisions(token));
+                                }, "Date change rejected. The original date stands.")
+                              }
+                            >
+                              Reject
+                            </button>
+                          </div>
+                          {!revisionNotes[revision.id]?.trim() ? (
+                            <p className="mt-1 text-xs text-[#8794A8]">
+                              A reason is required to reject, so the provider knows what to do next.
+                            </p>
+                          ) : null}
+                        </article>
+                      ))}
+                    </div>
+                  </div>
                 ) : null}
 
                 <div className="mt-4 space-y-3">

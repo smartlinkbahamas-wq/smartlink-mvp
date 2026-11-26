@@ -505,6 +505,201 @@ async function listJobsNeedingAttention() {
   return { settings, jobs: decorated };
 }
 
+
+// --- Date change approval ---------------------------------------------------
+
+/**
+ * Date revisions waiting for an administrator.
+ *
+ * Revisions made before work started are recorded as 'auto' and never appear
+ * here -- a provider adjusting a date on work they have not begun needs no
+ * permission. Only changes requested after work is in progress require review,
+ * which is the rule as specified.
+ */
+async function listPendingDateRevisions() {
+  const supabase = requireSupabase();
+
+  const { data: revisions, error } = await supabase
+    .from("job_date_revisions")
+    .select("*")
+    .eq("approval_status", "pending")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    if (tableIsMissing(error)) return [];
+    throw new AppError("Could not load the date change requests.", 500, error.message);
+  }
+  if (!revisions || revisions.length === 0) return [];
+
+  // The request is unreadable without the job and the provider behind it, so
+  // both are stitched on rather than left as ids.
+  const jobIds = [...new Set(revisions.map((r) => r.job_id))];
+  const expertIds = [...new Set(revisions.map((r) => r.expert_id).filter(Boolean))];
+
+  const [jobsResult, expertsResult] = await Promise.all([
+    supabase
+      .from("jobs")
+      .select("id, reference, job_name, customer_name, status, expected_completion_date, original_expected_completion_date, agreed_price, currency, source")
+      .in("id", jobIds),
+    expertIds.length
+      ? supabase.from("experts").select("expert_id, name, business_name").in("expert_id", expertIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  const jobsById = new Map((jobsResult.data || []).map((j) => [j.id, j]));
+  const expertsById = new Map((expertsResult.data || []).map((e) => [e.expert_id, e]));
+
+  return revisions.map((revision) => {
+    const job = jobsById.get(revision.job_id) || null;
+    const expert = expertsById.get(revision.expert_id) || null;
+    const slip =
+      revision.previous_date && revision.requested_date
+        ? Math.round(
+            (new Date(`${revision.requested_date}T00:00:00Z`).getTime() -
+              new Date(`${revision.previous_date}T00:00:00Z`).getTime()) /
+              (24 * 60 * 60 * 1000),
+          )
+        : null;
+
+    return {
+      ...revision,
+      job,
+      provider_name: expert?.business_name || expert?.name || null,
+      // How much later the provider is asking for. The number an
+      // administrator actually judges the request on.
+      days_later: slip,
+    };
+  });
+}
+
+/**
+ * Approves or rejects a requested date change.
+ *
+ * Approving applies the date and clears the monitoring trail, so the new
+ * deadline earns its own notices. Without that reset the job would never be
+ * chased again -- every notice for it had already been sent against the old
+ * date.
+ *
+ * Rejecting leaves the date untouched, which is the point: the original
+ * deadline stands and the timeliness figures continue against it.
+ */
+async function reviewDateRevision(revisionId, { decision, notes, reviewedByUserId }) {
+  if (!["approved", "rejected"].includes(decision)) {
+    throw new AppError("Choose approve or reject.", 400, { code: "invalid_decision" });
+  }
+
+  const supabase = requireSupabase();
+
+  const { data: revision, error: loadError } = await supabase
+    .from("job_date_revisions")
+    .select("*")
+    .eq("id", revisionId)
+    .maybeSingle();
+
+  if (loadError) guard(loadError, "Could not load that request.");
+  if (!revision) {
+    throw new AppError("That request could not be found.", 404, { code: "revision_not_found" });
+  }
+  if (revision.approval_status !== "pending") {
+    throw new AppError(
+      `This request has already been ${revision.approval_status}.`,
+      409,
+      { code: "revision_already_reviewed" },
+    );
+  }
+
+  // Conditional on still being pending, so two administrators deciding at the
+  // same moment cannot both apply a change.
+  const { data: updated, error } = await supabase
+    .from("job_date_revisions")
+    .update({
+      approval_status: decision,
+      review_notes: notes?.trim() || null,
+      reviewed_by_user_id: reviewedByUserId || null,
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq("id", revisionId)
+    .eq("approval_status", "pending")
+    .select("*")
+    .maybeSingle();
+
+  if (error) guard(error, "Could not record that decision.");
+  if (!updated) {
+    throw new AppError(
+      "Another administrator answered this request first. Reload and check.",
+      409,
+      { code: "revision_already_reviewed" },
+    );
+  }
+
+  if (decision === "approved") {
+    const { data: job } = await supabase
+      .from("jobs")
+      .select("original_expected_completion_date")
+      .eq("id", revision.job_id)
+      .maybeSingle();
+
+    const update = {
+      expected_completion_date: revision.requested_date,
+      updated_at: new Date().toISOString(),
+    };
+
+    // The original deadline is captured once and never overwritten, so it
+    // survives however many times the date later moves. Every timeliness
+    // figure is measured against it rather than against the latest extension.
+    if (!job?.original_expected_completion_date) {
+      update.original_expected_completion_date = revision.previous_date || revision.requested_date;
+    }
+
+    const { error: jobError } = await supabase
+      .from("jobs")
+      .update(update)
+      .eq("id", revision.job_id);
+
+    if (jobError) {
+      throw new AppError(
+        "The decision was recorded but the job date could not be updated.",
+        500,
+        jobError.message,
+      );
+    }
+
+    // The new deadline earns its own notices. Without this the job would never
+    // be chased again, because every notice had been sent against the old date.
+    await resetMonitoring(revision.job_id);
+  }
+
+  const { recordStageEvent } = require("./pipeline.service");
+  await recordStageEvent({
+    subjectType: "job_date_revision",
+    subjectId: revisionId,
+    expertId: revision.expert_id,
+    fromStage: "pending",
+    toStage: decision,
+    actorType: "admin",
+    actorUserId: reviewedByUserId || null,
+    source: "date_revision_review",
+    notes: notes?.trim() || null,
+  });
+
+  return updated;
+}
+
+async function listDateRevisionsForJob(jobId) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from("job_date_revisions")
+    .select("*")
+    .eq("job_id", jobId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    if (tableIsMissing(error)) return [];
+    throw new AppError("Could not load the date history.", 500, error.message);
+  }
+  return data || [];
+}
+
 module.exports = {
   OPEN_STATUSES,
   AWAITING_CUSTOMER,
@@ -524,4 +719,7 @@ module.exports = {
   addAdminNote,
   listAdminNotes,
   listJobsNeedingAttention,
+  listPendingDateRevisions,
+  reviewDateRevision,
+  listDateRevisionsForJob,
 };

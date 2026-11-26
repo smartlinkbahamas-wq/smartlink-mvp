@@ -36,6 +36,14 @@ jobMonitoringAdminRouter.get("/attention", ...adminGuards, asyncHandler(c.getJob
 jobMonitoringAdminRouter.get("/settings", ...adminGuards, asyncHandler(c.getMonitoringSettings));
 jobMonitoringAdminRouter.patch("/settings", ...adminGuards, asyncHandler(c.patchMonitoringSettings));
 
+// Declared before "/:id" so the literal segment is not read as a job id.
+jobMonitoringAdminRouter.get("/date-revisions", ...adminGuards, asyncHandler(c.getPendingDateRevisions));
+jobMonitoringAdminRouter.patch(
+  "/date-revisions/:revisionId",
+  ...adminGuards,
+  asyncHandler(c.patchDateRevision),
+);
+
 jobMonitoringAdminRouter.get("/:id", ...adminGuards, asyncHandler(c.getJobMonitoringDetail));
 jobMonitoringAdminRouter.post("/:id/attempts", ...adminGuards, asyncHandler(c.postVerificationAttempt));
 jobMonitoringAdminRouter.post("/:id/unverifiable", ...adminGuards, asyncHandler(c.postMarkUnverifiable));

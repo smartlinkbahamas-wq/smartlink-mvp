@@ -26,6 +26,7 @@ import type {
   JobNeedingAttention,
   JobVerificationAttempt,
   VerificationOutcome,
+  PendingDateRevision,
 } from "@/types";
 
 const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000/api";
@@ -518,4 +519,24 @@ export async function updateMonitoringSettings(
     { method: "PATCH", body: JSON.stringify(payload) },
   );
   return response.data;
+}
+
+export async function getPendingDateRevisions(token: string) {
+  const response = await requestJson<{
+    success: boolean;
+    data: { revisions: PendingDateRevision[] };
+  }>("/admin/job-monitoring/date-revisions", token);
+  return response.data.revisions || [];
+}
+
+export async function reviewDateRevision(
+  token: string,
+  revisionId: string,
+  payload: { decision: "approved" | "rejected"; notes?: string },
+) {
+  return requestJson<{ success: boolean; message: string; data: unknown }>(
+    `/admin/job-monitoring/date-revisions/${revisionId}`,
+    token,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
 }
