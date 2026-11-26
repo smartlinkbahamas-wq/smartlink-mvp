@@ -276,9 +276,19 @@ async function callProvider(instruction, responseSchema) {
       // Read the provider's own words. Without this a 403 for "this model no
       // longer exists" is indistinguishable from a bad key, and both show up
       // as a silent fallback nobody can diagnose.
+      // Only the provider's error code and message, never the body.
+      // A rejected generation comes back with `failed_generation` attached,
+      // which is model output that can quote the customer's own words -- and
+      // those must not reach a log file. The code and message are what tell a
+      // retired model apart from a bad key, which is the whole reason for
+      // reading the error at all.
       let detail = "";
       try {
-        detail = (await response.text()).slice(0, 300);
+        const body = await response.json();
+        detail = [body?.error?.code, body?.error?.status, body?.error?.message]
+          .filter(Boolean)
+          .join(" ")
+          .slice(0, 200);
       } catch {
         // The status alone will have to do.
       }
