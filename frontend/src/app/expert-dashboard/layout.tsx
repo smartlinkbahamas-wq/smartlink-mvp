@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   CalendarDays,
   Bell,
+  LifeBuoy,
   Settings,
   CreditCard,
   BadgeCheck,
@@ -49,6 +50,7 @@ const navigation = [
   { name: "Verification", href: "/expert-dashboard/verification", icon: ShieldCheck },
   { name: "Availability", href: "/expert-dashboard/availability", icon: CalendarDays },
   { name: "Notifications", href: "/expert-dashboard/notifications", icon: Bell },
+  { name: "Help & Support", href: "/expert-dashboard/support", icon: LifeBuoy },
   { name: "Security Settings", href: "/expert-dashboard/security", icon: Settings },
   { name: "Billing", href: "/expert-dashboard/billing", icon: CreditCard },
 ];

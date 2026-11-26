@@ -28,6 +28,8 @@ import type {
   VerificationOutcome,
   PendingDateRevision,
   AdminReport,
+  AdminTicket,
+  TicketMessage,
 } from "@/types";
 
 const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000/api";
@@ -548,4 +550,68 @@ export async function getPlatformReport(token: string) {
     token,
   );
   return response.data;
+}
+
+// --- Support tickets --------------------------------------------------------
+
+export async function getSupportTickets(token: string, status?: string) {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  const response = await requestJson<{ success: boolean; data: { tickets: AdminTicket[] } }>(
+    `/admin/support${query}`,
+    token,
+  );
+  return response.data.tickets || [];
+}
+
+export async function getSupportTicket(token: string, id: string) {
+  const response = await requestJson<{
+    success: boolean;
+    data: { ticket: AdminTicket; messages: TicketMessage[] };
+  }>(`/admin/support/${id}`, token);
+  return response.data;
+}
+
+export async function updateSupportTicket(
+  token: string,
+  id: string,
+  payload: { status?: string; priority?: string; resolution?: string },
+) {
+  return requestJson<{ success: boolean; message: string; data: AdminTicket }>(
+    `/admin/support/${id}`,
+    token,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
+export async function postSupportMessage(
+  token: string,
+  id: string,
+  payload: { body: string; visibleTo: "internal" | "provider" | "customer" | "all" },
+) {
+  return requestJson<{ success: boolean; message: string; data: TicketMessage }>(
+    `/admin/support/${id}/messages`,
+    token,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+/** Writing this is what makes a complaint visible to the provider at all. */
+export async function setProviderSummary(token: string, id: string, summary: string) {
+  return requestJson<{ success: boolean; message: string; data: AdminTicket }>(
+    `/admin/support/${id}/summary`,
+    token,
+    { method: "POST", body: JSON.stringify({ summary }) },
+  );
+}
+
+export async function decideShareOriginal(
+  token: string,
+  id: string,
+  payload: { share: boolean; reason?: string },
+) {
+  return requestJson<{ success: boolean; message: string; data: unknown }>(
+    `/admin/support/${id}/share-original`,
+    token,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
 }

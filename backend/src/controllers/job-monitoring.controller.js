@@ -178,6 +178,53 @@ async function submitConfirmation(req, res) {
     }
   }
 
+  // A customer reporting a problem raises a complaint automatically, with the
+  // job, the provider and their own words already attached. Asking them to
+  // repeat the whole story in a separate form is how complaints go unreported.
+  //
+  // Cannot throw: the confirmation is the record that matters, and a customer
+  // who answered must not see an error because a ticket could not be created.
+  let ticketReference = null;
+  if (payload.outcome !== "completed_satisfactorily") {
+    try {
+      const supabase = requireSupabase();
+      const { data: job } = await supabase
+        .from("jobs")
+        .select("id, expert_id, customer_id, customer_name, customer_email, job_name, reference")
+        .eq("id", link.subject_id)
+        .maybeSingle();
+
+      if (job) {
+        const { createTicket } = require("../services/support.service");
+        const labels = {
+          completed_with_concerns: "Completed, but with concerns",
+          partially_completed: "Only partially completed",
+          not_completed: "Not completed",
+        };
+
+        const ticket = await createTicket({
+          category: "job_complaint",
+          raisedBy: "customer",
+          raisedByEmail: job.customer_email,
+          raisedByName: job.customer_name,
+          jobId: job.id,
+          expertId: job.expert_id,
+          customerId: job.customer_id,
+          subject: `${labels[payload.outcome]} — ${job.job_name}`,
+          // The customer's own words, which the provider will NOT see. They
+          // receive an administrator's summary instead.
+          body:
+            payload.comments?.trim() ||
+            `The customer reported: ${labels[payload.outcome].toLowerCase()}. No further detail was given.`,
+          priority: payload.outcome === "not_completed" ? "high" : "normal",
+        });
+        ticketReference = ticket.reference;
+      }
+    } catch (ticketError) {
+      console.warn("[support] confirmation recorded but no ticket raised:", ticketError.message);
+    }
+  }
+
   await consumeSecureLink(link.id, { detail: payload.outcome, context });
 
   const messages = {
@@ -190,7 +237,7 @@ async function submitConfirmation(req, res) {
   return res.json({
     success: true,
     message: messages[payload.outcome],
-    data: { outcome: payload.outcome, jobStatus: result.jobStatus, surveyRecorded },
+    data: { outcome: payload.outcome, jobStatus: result.jobStatus, surveyRecorded, ticketReference },
   });
 }
 

@@ -98,6 +98,9 @@ it means your Supabase schema has not been applied yet.
      Unverifiable category. Run after install_jobs.sql and install_scheduler.sql.
    - `sql/install_surveys.sql` — customer satisfaction (asked with the
      completion confirmation) and the provider follow-up survey.
+   - `sql/install_support.sql` — support tickets and complaint handling.
+     A complaint is invisible to the provider until an administrator writes a
+     summary; the customer's original text is shared only by explicit decision.
 
    **Check you are on the right project before running.** The SQL editor does
    not warn you, and running these against a different project creates tables

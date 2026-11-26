@@ -10,6 +10,7 @@ import {
   Inbox,
   Briefcase,
   BarChart3,
+  LifeBuoy,
   LayoutDashboard,
   LogOut,
   ScrollText,
@@ -76,6 +77,12 @@ import {
   getPendingDateRevisions,
   reviewDateRevision,
   getPlatformReport,
+  getSupportTickets,
+  getSupportTicket,
+  updateSupportTicket,
+  postSupportMessage,
+  setProviderSummary,
+  decideShareOriginal,
 } from "@/lib/admin-api";
 import { clearAdminSession, getAdminAccessToken, logoutCurrentSession } from "@/lib/admin-session";
 import { canAccessAdminArea } from "@/lib/role-guard";
@@ -108,6 +115,8 @@ import type {
   VerificationOutcome,
   PendingDateRevision,
   AdminReport,
+  AdminTicket,
+  TicketMessage,
 } from "@/types";
 
 function can(me: AdminMe | null, permission: string) {
@@ -212,8 +221,24 @@ function mapAuditAction(action: string) {
   return map[action] || action.replaceAll("_", " ");
 }
 
-type TabKey = "overview" | "experts" | "leads" | "jobs" | "reports" | "team" | "categories" | "settings" | "activity";
+type TabKey = "overview" | "experts" | "leads" | "jobs" | "support" | "reports" | "team" | "categories" | "settings" | "activity";
 type ExpertsSubTabKey = "directory" | "applications" | "reviews" | "performance";
+const TICKET_STATUS_LABELS: Record<string, string> = {
+  new: "New",
+  under_review: "Under review",
+  awaiting_customer: "Awaiting customer",
+  awaiting_provider: "Awaiting provider",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+const MESSAGE_VISIBILITY: Array<{ value: "internal" | "provider" | "customer" | "all"; label: string }> = [
+  { value: "internal", label: "Internal note — nobody outside SmartLink" },
+  { value: "provider", label: "To the provider" },
+  { value: "customer", label: "To the customer" },
+  { value: "all", label: "To both" },
+];
+
 const JOB_STATUS_LABELS: Record<string, string> = {
   awarded: "Awarded",
   scheduled: "Scheduled",
@@ -314,6 +339,13 @@ export default function AdminPage() {
   const [pendingDateRevisions, setPendingDateRevisions] = useState<PendingDateRevision[]>([]);
   const [revisionNotes, setRevisionNotes] = useState<Record<string, string>>({});
   const [platformReport, setPlatformReport] = useState<AdminReport | null>(null);
+  const [supportTickets, setSupportTickets] = useState<AdminTicket[]>([]);
+  const [openTicketId, setOpenTicketId] = useState<string | null>(null);
+  const [ticketDetail, setTicketDetail] = useState<{ ticket: AdminTicket; messages: TicketMessage[] } | null>(null);
+  const [summaryDraft, setSummaryDraft] = useState("");
+  const [ticketReply, setTicketReply] = useState("");
+  const [ticketReplyVisibility, setTicketReplyVisibility] = useState<"internal" | "provider" | "customer" | "all">("internal");
+  const [resolutionDraft, setResolutionDraft] = useState("");
   const [reviewNotesDraft, setReviewNotesDraft] = useState<Record<string, string>>({});
   const [matchOverrides, setMatchOverrides] = useState<AdminMatchOverrideRecord[]>([]);
   const [expertPerformance, setExpertPerformance] = useState<AdminExpertPerformanceRecord[]>([]);
@@ -399,6 +431,13 @@ export default function AdminPage() {
         label: "Jobs",
         helper: "Chase overdue work and verify completions.",
         icon: Briefcase,
+        enabled: can(me, "lead.assign"),
+      },
+      {
+        key: "support" as const,
+        label: "Support",
+        helper: "Tickets and customer complaints.",
+        icon: LifeBuoy,
         enabled: can(me, "lead.assign"),
       },
       {
@@ -534,6 +573,7 @@ export default function AdminPage() {
           .catch(() => undefined),
         getPendingDateRevisions(accessToken).then(setPendingDateRevisions).catch(() => undefined),
         getPlatformReport(accessToken).then(setPlatformReport).catch(() => undefined),
+        getSupportTickets(accessToken).then(setSupportTickets).catch(() => undefined),
         getExpertPerformance(accessToken).then(setExpertPerformance).catch(() => undefined),
         searchLeads(accessToken, "").then(setLeadOptions).catch(() => undefined),
         getModerationReviews(accessToken).then(setModerationReviews).catch(() => undefined),
@@ -3103,6 +3143,293 @@ export default function AdminPage() {
                     </div>
                   </>
                 )}
+              </section>
+            ) : null}
+
+            {activeTab === "support" ? (
+              <section className="rounded-2xl border border-[#E2EAF8] bg-white p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold">Support and complaints</h2>
+                    <p className="mt-1 text-sm text-[#62728C]">
+                      A complaint is invisible to the provider until you write a summary. They see
+                      your summary, never the customer&apos;s own words, unless you decide to share
+                      the original.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-[#FFF0F2] px-3 py-1 text-xs font-semibold text-[#C8234C]">
+                    {supportTickets.filter((t) => !["resolved", "closed"].includes(t.status)).length} open
+                  </span>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {supportTickets.map((ticket) => {
+                    const isOpen = openTicketId === ticket.id;
+                    const isComplaint = ticket.category === "job_complaint";
+                    const needsSummary = isComplaint && !ticket.provider_summary;
+
+                    return (
+                      <article key={ticket.id} className="rounded-xl border border-[#E1E9F8] bg-white p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-sm font-semibold">{ticket.subject}</p>
+                              <span className="rounded-full bg-[#EEF3FF] px-2.5 py-1 text-xs font-semibold text-[#2759C9]">
+                                {TICKET_STATUS_LABELS[ticket.status] || ticket.status}
+                              </span>
+                              {isComplaint ? (
+                                <span className="rounded-full bg-[#FFF0F2] px-2.5 py-1 text-xs font-semibold text-[#C8234C]">
+                                  Complaint
+                                </span>
+                              ) : (
+                                <span className="rounded-full bg-[#F1F4F9] px-2.5 py-1 text-xs font-semibold text-[#5E6F8A]">
+                                  Platform support
+                                </span>
+                              )}
+                              {needsSummary ? (
+                                <span className="rounded-full bg-[#FFF7E6] px-2.5 py-1 text-xs font-semibold text-[#A3620A]">
+                                  Needs a summary before the provider sees it
+                                </span>
+                              ) : null}
+                              {ticket.original_requested_at && !ticket.original_shared_at ? (
+                                <span className="rounded-full bg-[#FFF7E6] px-2.5 py-1 text-xs font-semibold text-[#A3620A]">
+                                  Provider asked for the original
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="mt-1 text-xs text-[#62728C]">
+                              {ticket.reference} · raised by {ticket.raised_by}
+                              {ticket.raised_by_name ? ` (${ticket.raised_by_name})` : ""} ·{" "}
+                              {formatDateTime(ticket.created_at)}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-[#D6E1F4] bg-white px-3 py-1.5 text-sm font-semibold text-[#2E67E8]"
+                            onClick={async () => {
+                              if (isOpen) {
+                                setOpenTicketId(null);
+                                setTicketDetail(null);
+                                return;
+                              }
+                              setOpenTicketId(ticket.id);
+                              setTicketDetail(null);
+                              setSummaryDraft("");
+                              setTicketReply("");
+                              setResolutionDraft(ticket.resolution || "");
+                              setTicketReplyVisibility("internal");
+                              try {
+                                setTicketDetail(await getSupportTicket(token, ticket.id));
+                              } catch (e) {
+                                setError(e instanceof Error ? e.message : "Could not open that ticket.");
+                              }
+                            }}
+                          >
+                            {isOpen ? "Close" : "Open"}
+                          </button>
+                        </div>
+
+                        {isOpen ? (
+                          <div className="mt-4 space-y-4 border-t border-[#E6EDF9] pt-4">
+                            {ticketDetail === null ? (
+                              <p className="text-sm text-[#6A7C98]">Loading…</p>
+                            ) : (
+                              <>
+                                {/* The original, which only administrators see
+                                    unless a sharing decision is made. */}
+                                <div className="rounded-xl bg-[#F7FAFF] p-3">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">
+                                    {isComplaint ? "The customer's original message — not shown to the provider" : "What they wrote"}
+                                  </p>
+                                  <p className="mt-1 whitespace-pre-line text-sm text-[#111827]">
+                                    {ticketDetail.ticket.body}
+                                  </p>
+                                </div>
+
+                                {isComplaint ? (
+                                  <div>
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">
+                                      Summary for the provider
+                                    </p>
+                                    {ticketDetail.ticket.provider_summary ? (
+                                      <p className="mt-1 rounded-lg bg-[#FFFBF4] px-3 py-2 text-sm text-[#8A6520]">
+                                        {ticketDetail.ticket.provider_summary}
+                                      </p>
+                                    ) : (
+                                      <div className="mt-1 flex flex-wrap items-end gap-2">
+                                        <textarea
+                                          value={summaryDraft}
+                                          onChange={(e) => setSummaryDraft(e.target.value)}
+                                          rows={3}
+                                          placeholder="Describe the concern in your own words. The provider sees this instead of the customer's message."
+                                          className="min-w-[18rem] flex-1 rounded-xl border border-[#D6E1F4] p-2 text-sm"
+                                        />
+                                        <button
+                                          type="button"
+                                          disabled={summaryDraft.trim().length < 10}
+                                          className="h-10 rounded-xl bg-[#2E67E8] px-4 text-sm font-semibold text-white disabled:opacity-50"
+                                          onClick={() =>
+                                            runAction(async () => {
+                                              await setProviderSummary(token, ticket.id, summaryDraft.trim());
+                                              setTicketDetail(await getSupportTicket(token, ticket.id));
+                                              setSupportTickets(await getSupportTickets(token));
+                                              setSummaryDraft("");
+                                            }, "Summary sent. The provider can now see this complaint.")
+                                          }
+                                        >
+                                          Send summary
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : null}
+
+                                {/* The sharing decision, offered only once the
+                                    provider has actually asked. */}
+                                {ticketDetail.ticket.original_requested_at && !ticketDetail.ticket.original_shared_at ? (
+                                  <div className="rounded-xl border border-[#FFE2B8] bg-[#FFFBF4] p-3">
+                                    <p className="text-sm text-[#8A6520]">
+                                      The provider has asked to see the customer&apos;s original message.
+                                      Sharing it is your decision and is recorded either way.
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        className="rounded-lg bg-[#177245] px-3 py-1.5 text-sm font-semibold text-white"
+                                        onClick={() =>
+                                          runAction(async () => {
+                                            await decideShareOriginal(token, ticket.id, { share: true });
+                                            setTicketDetail(await getSupportTicket(token, ticket.id));
+                                            setSupportTickets(await getSupportTickets(token));
+                                          }, "Original shared with the provider.")
+                                        }
+                                      >
+                                        Share the original
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded-lg border border-[#D6E1F4] bg-white px-3 py-1.5 text-sm font-semibold text-[#5E6F8A]"
+                                        onClick={() =>
+                                          runAction(async () => {
+                                            await decideShareOriginal(token, ticket.id, {
+                                              share: false,
+                                              reason: "Administrator decided not to share the original.",
+                                            });
+                                            setTicketDetail(await getSupportTicket(token, ticket.id));
+                                          }, "Recorded: the original will not be shared.")
+                                        }
+                                      >
+                                        Do not share
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {/* The thread, with each message labelled by who
+                                    can actually read it. */}
+                                <div className="space-y-2">
+                                  {ticketDetail.messages.map((message) => (
+                                    <div
+                                      key={message.id}
+                                      className={`rounded-lg p-3 text-sm ${
+                                        message.visible_to === "internal" ? "bg-[#F1F4F9]" : "bg-[#F7FAFF]"
+                                      }`}
+                                    >
+                                      <p className="text-xs font-semibold text-[#8794A8]">
+                                        {message.author_type} · {formatDateTime(message.created_at)} ·{" "}
+                                        {message.visible_to === "internal"
+                                          ? "internal only"
+                                          : `visible to ${message.visible_to}`}
+                                      </p>
+                                      <p className="mt-1 whitespace-pre-line text-[#111827]">{message.body}</p>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <div className="flex flex-wrap items-end gap-2">
+                                  <label className="sr-only" htmlFor={`msg-${ticket.id}`}>Message</label>
+                                  <textarea
+                                    id={`msg-${ticket.id}`}
+                                    rows={2}
+                                    value={ticketReply}
+                                    onChange={(e) => setTicketReply(e.target.value)}
+                                    placeholder="Add a message or an internal note"
+                                    className="min-w-[16rem] flex-1 rounded-xl border border-[#D6E1F4] p-2 text-sm"
+                                  />
+                                  <label className="sr-only" htmlFor={`vis-${ticket.id}`}>Who can see this</label>
+                                  <select
+                                    id={`vis-${ticket.id}`}
+                                    value={ticketReplyVisibility}
+                                    onChange={(e) => setTicketReplyVisibility(e.target.value as typeof ticketReplyVisibility)}
+                                    className="h-10 rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                                  >
+                                    {MESSAGE_VISIBILITY.map((option) => (
+                                      <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    disabled={!ticketReply.trim()}
+                                    className="h-10 rounded-xl bg-[#2E67E8] px-4 text-sm font-semibold text-white disabled:opacity-50"
+                                    onClick={() =>
+                                      runAction(async () => {
+                                        await postSupportMessage(token, ticket.id, {
+                                          body: ticketReply.trim(),
+                                          visibleTo: ticketReplyVisibility,
+                                        });
+                                        setTicketDetail(await getSupportTicket(token, ticket.id));
+                                        setTicketReply("");
+                                      }, "Message added.")
+                                    }
+                                  >
+                                    Add
+                                  </button>
+                                </div>
+
+                                {!["resolved", "closed"].includes(ticketDetail.ticket.status) ? (
+                                  <div className="flex flex-wrap items-end gap-2 border-t border-[#E6EDF9] pt-3">
+                                    <label className="sr-only" htmlFor={`res-${ticket.id}`}>How it was resolved</label>
+                                    <input
+                                      id={`res-${ticket.id}`}
+                                      value={resolutionDraft}
+                                      onChange={(e) => setResolutionDraft(e.target.value)}
+                                      placeholder="How was it resolved? (required to resolve)"
+                                      className="h-10 min-w-[18rem] flex-1 rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={!resolutionDraft.trim()}
+                                      className="h-10 rounded-xl bg-[#177245] px-4 text-sm font-semibold text-white disabled:opacity-50"
+                                      onClick={() =>
+                                        runAction(async () => {
+                                          await updateSupportTicket(token, ticket.id, {
+                                            status: "resolved",
+                                            resolution: resolutionDraft.trim(),
+                                          });
+                                          setSupportTickets(await getSupportTickets(token));
+                                          setTicketDetail(await getSupportTicket(token, ticket.id));
+                                        }, "Ticket resolved.")
+                                      }
+                                    >
+                                      Resolve
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </>
+                            )}
+                          </div>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+
+                  {supportTickets.length === 0 ? (
+                    <p className="text-sm text-[#6A7C98]">
+                      No tickets. Complaints appear here automatically when a customer reports a
+                      problem with completed work.
+                    </p>
+                  ) : null}
+                </div>
               </section>
             ) : null}
 

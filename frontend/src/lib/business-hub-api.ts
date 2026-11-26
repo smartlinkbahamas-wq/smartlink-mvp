@@ -26,6 +26,8 @@ import type {
   ProviderSurveyInput,
   ProviderReport,
   ReportRate,
+  ProviderTicket,
+  TicketMessage,
   DayAvailability,
   WorkingHoursDay,
 } from "@/types";
@@ -612,4 +614,43 @@ export async function getMyReport(token: string) {
 export function formatRate(rate?: ReportRate | null) {
   if (!rate || rate.denominator === 0) return "—";
   return `${rate.numerator} of ${rate.denominator}${rate.percent !== null ? ` (${rate.percent}%)` : ""}`;
+}
+
+// --- Support (provider) -----------------------------------------------------
+
+export async function listMyTickets(token: string) {
+  const res = await request<{ data: { tickets: ProviderTicket[] } }>("/support", token);
+  return res.data.tickets || [];
+}
+
+export async function getMyTicket(id: string, token: string) {
+  const res = await request<{
+    data: { ticket: ProviderTicket; messages: TicketMessage[]; originalComplaint: string | null };
+  }>(`/support/${id}`, token);
+  return res.data;
+}
+
+export async function createSupportTicket(
+  payload: { subject: string; body: string },
+  token: string,
+) {
+  return request<{ message: string; data: ProviderTicket }>("/support", token, {
+    method: "POST",
+    body: JSON.stringify({ ...payload, category: "platform_support" }),
+  });
+}
+
+export async function postTicketMessage(id: string, body: string, token: string) {
+  return request<{ message: string; data: TicketMessage }>(`/support/${id}/messages`, token, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });
+}
+
+export async function requestOriginalComplaint(id: string, token: string) {
+  return request<{ message: string; data: ProviderTicket }>(
+    `/support/${id}/request-original`,
+    token,
+    { method: "POST" },
+  );
 }

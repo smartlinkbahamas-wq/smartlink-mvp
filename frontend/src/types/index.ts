@@ -1376,3 +1376,66 @@ export interface AdminReport {
     };
   };
 }
+
+// ---------------------------------------------------------------------------
+// Support tickets and complaints
+// ---------------------------------------------------------------------------
+
+export type TicketStatus =
+  | "new"
+  | "under_review"
+  | "awaiting_customer"
+  | "awaiting_provider"
+  | "resolved"
+  | "closed";
+
+export type TicketCategory = "platform_support" | "job_complaint";
+
+export interface TicketMessage {
+  id: string;
+  author_type: "customer" | "provider" | "administrator" | "system";
+  author_name: string | null;
+  body: string;
+  // Internal notes never reach a provider or customer: they are filtered out
+  // of the query, not hidden on screen.
+  visible_to: "internal" | "provider" | "customer" | "all";
+  created_at: string;
+}
+
+/**
+ * A ticket as a PROVIDER sees it.
+ *
+ * There is deliberately no `body` field. For a complaint, the provider sees
+ * `provider_summary` — an administrator's account — and the customer's
+ * original words only if an administrator chose to share them, which arrives
+ * separately as `originalComplaint`.
+ */
+export interface ProviderTicket {
+  id: string;
+  reference: string;
+  category: TicketCategory;
+  status: TicketStatus;
+  priority: "low" | "normal" | "high";
+  subject: string;
+  provider_summary: string | null;
+  provider_summary_at: string | null;
+  original_requested_at: string | null;
+  original_shared_at: string | null;
+  job_id: string | null;
+  expert_id: string | null;
+  resolution: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A ticket as an ADMINISTRATOR sees it — including the original text. */
+export interface AdminTicket extends ProviderTicket {
+  raised_by: "customer" | "provider" | "administrator";
+  raised_by_email: string | null;
+  raised_by_name: string | null;
+  body: string;
+  customer_id: string | null;
+  assigned_to_user_id: string | null;
+  closed_at: string | null;
+}
