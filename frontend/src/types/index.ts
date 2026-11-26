@@ -1204,3 +1204,33 @@ export interface PendingDateRevision {
     source: string;
   } | null;
 }
+
+/** A closed job a provider has not yet been surveyed about. */
+export interface PendingSurveyJob {
+  id: string;
+  reference: string;
+  job_name: string;
+  customer_name: string;
+  status: string;
+  source: string;
+  actual_completion_date: string | null;
+  created_at: string;
+}
+
+/**
+ * The provider's follow-up answers.
+ *
+ * There is deliberately no field for revenue or profit: providers were
+ * promised they would not be asked to disclose profitability.
+ */
+export interface ProviderSurveyInput {
+  jobId?: string | null;
+  introductionRequestId?: string | null;
+  resultedInJob: boolean;
+  wasCompleted?: boolean | null;
+  requestDescribedAccurately?: boolean | null;
+  customerResponsive?: boolean | null;
+  opportunityWorthwhile?: boolean | null;
+  wouldAcceptSimilar?: boolean | null;
+  suggestions?: string;
+}

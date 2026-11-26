@@ -333,6 +333,102 @@ async function appointmentReminders() {
   return `${bookings.length} appointment(s) tomorrow: ${customerEmails} customer and ${providerEmails} provider reminder(s) sent`;
 }
 
+
+/**
+ * Invites providers to answer the follow-up survey on jobs that have closed.
+ *
+ * Daily, and one invitation per job ever. A provider asked twice about the
+ * same job concludes the survey is automated noise and stops answering all of
+ * them -- which costs more than the one response it might have gained.
+ */
+async function providerFollowupSurveys() {
+  const supabase = requireSupabase();
+
+  const { data: jobs, error } = await supabase
+    .from("jobs")
+    .select("id, expert_id, reference, job_name, customer_name, status, source")
+    .in("status", ["customer_confirmed", "unverifiable", "cancelled"])
+    .limit(BATCH_LIMIT);
+
+  if (error) {
+    if (error.code === "42P01" || /schema cache/i.test(error.message || "")) return null;
+    throw new Error(`could not read jobs: ${error.message}`);
+  }
+  if (!jobs || jobs.length === 0) return null;
+
+  const jobIds = jobs.map((job) => job.id);
+
+  const [invitedResult, answeredResult] = await Promise.all([
+    supabase.from("provider_survey_invitations").select("job_id").in("job_id", jobIds),
+    supabase.from("provider_followup_surveys").select("job_id").in("job_id", jobIds),
+  ]);
+
+  // The surveys tables may not be installed on this environment yet.
+  if (invitedResult.error && /schema cache|42P01/i.test(invitedResult.error.message || invitedResult.error.code || "")) {
+    return null;
+  }
+
+  const invited = new Set((invitedResult.data || []).map((row) => row.job_id));
+  const answered = new Set((answeredResult.data || []).map((row) => row.job_id));
+  const due = jobs.filter((job) => !invited.has(job.id) && !answered.has(job.id));
+
+  if (due.length === 0) return null;
+
+  const expertIds = [...new Set(due.map((job) => job.expert_id))];
+  const { data: experts } = await supabase
+    .from("experts")
+    .select("expert_id, name, business_name, business_email")
+    .in("expert_id", expertIds);
+
+  const { data: links } = await supabase
+    .from("expert_user_links")
+    .select("expert_id, user_id")
+    .in("expert_id", expertIds);
+
+  const userIds = (links || []).map((l) => l.user_id).filter(Boolean);
+  const { data: users } = userIds.length
+    ? await supabase.from("user_profiles").select("user_id, email").in("user_id", userIds)
+    : { data: [] };
+
+  const emailByUserId = new Map((users || []).map((u) => [u.user_id, u.email]));
+  const userIdByExpert = new Map((links || []).map((l) => [l.expert_id, l.user_id]));
+  const expertsById = new Map((experts || []).map((e) => [e.expert_id, e]));
+
+  let sent = 0;
+
+  for (const job of due) {
+    const expert = expertsById.get(job.expert_id);
+    const to = expert?.business_email || emailByUserId.get(userIdByExpert.get(job.expert_id));
+
+    // Marked as invited either way: with no address this will never be
+    // sendable, and leaving it unmarked means re-attempting it every day.
+    const { error: markError } = await supabase
+      .from("provider_survey_invitations")
+      .insert({ expert_id: job.expert_id, job_id: job.id });
+
+    // A duplicate means another instance got there first, which is fine.
+    if (markError && markError.code !== "23505") continue;
+    if (markError) continue;
+    if (!to) continue;
+
+    await sendMail({
+      to,
+      subject: `How did ${job.reference} go?`,
+      text: `Your job "${job.job_name}" for ${job.customer_name} has closed. A few quick questions in your SmartLink dashboard would help us send you better opportunities. We will never ask what you earned.`,
+      html: `
+        <p>Your job <strong>${job.job_name}</strong> for ${job.customer_name} has closed.</p>
+        <p>A few quick questions in your dashboard would help us send you better opportunities —
+        whether the request described the work accurately, whether the customer was responsive, and
+        whether it was worth your time.</p>
+        <p style="color:#6B7280;font-size:13px;">We will never ask what you earned.</p>`,
+    });
+
+    sent += 1;
+  }
+
+  return sent > 0 ? `${sent} follow-up survey invitation(s) sent` : null;
+}
+
 /** Called once at boot. */
 function registerAll() {
   register("quotation_expiry_reminders", quotationExpiryReminders);
@@ -342,6 +438,7 @@ function registerAll() {
   // it can be tested without a mail service or a database.
   const { runJobMonitoring } = require("./job-monitoring-runner.service");
   register("job_monitoring", runJobMonitoring);
+  register("provider_followup_surveys", providerFollowupSurveys);
 }
 
 module.exports = {
@@ -349,4 +446,5 @@ module.exports = {
   quotationExpiryReminders,
   dailyLeadSummary,
   appointmentReminders,
+  providerFollowupSurveys,
 };

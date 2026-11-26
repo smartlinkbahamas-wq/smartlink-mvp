@@ -107,6 +107,17 @@ export default function ConfirmCompletionPage() {
   const [submitError, setSubmitError] = useState("");
   const [done, setDone] = useState("");
 
+  // The satisfaction survey, on the same screen. Everything here is optional:
+  // the confirmation above is the answer that matters, and a form demanding
+  // nine responses is one most people abandon.
+  const [overallRating, setOverallRating] = useState<number | null>(null);
+  const [detailRatings, setDetailRatings] = useState<Record<string, number>>({});
+  const [showDetail, setShowDetail] = useState(false);
+  const [scopeAsAgreed, setScopeAsAgreed] = useState<boolean | null>(null);
+  const [wouldRecommend, setWouldRecommend] = useState<boolean | null>(null);
+  const [wouldUseAgain, setWouldUseAgain] = useState<boolean | null>(null);
+  const [publicReviewOptIn, setPublicReviewOptIn] = useState(false);
+
   useEffect(() => {
     const found = readToken();
     setToken(found);
@@ -147,6 +158,22 @@ export default function ConfirmCompletionPage() {
       const result = await post<{ message: string }>("/submit", token, {
         outcome,
         comments: comments.trim() || undefined,
+        // Sent only when the customer actually rated. Omitting them entirely
+        // is what keeps the survey optional rather than silently recording
+        // nulls as answers.
+        ...(overallRating
+          ? {
+              overallRating,
+              qualityRating: detailRatings.quality,
+              timelinessRating: detailRatings.timeliness,
+              professionalismRating: detailRatings.professionalism,
+              communicationRating: detailRatings.communication,
+              scopeAsAgreed: scopeAsAgreed ?? undefined,
+              wouldRecommend: wouldRecommend ?? undefined,
+              wouldUseAgain: wouldUseAgain ?? undefined,
+              publicReviewOptIn,
+            }
+          : {}),
       });
       setDone(result.message);
     } catch (err) {
@@ -255,6 +282,137 @@ export default function ConfirmCompletionPage() {
               An administrator will look into this and may contact you. You do not need to do
               anything else.
             </p>
+          ) : null}
+
+          {/* The satisfaction survey. Shown once an outcome is chosen, so the
+              customer answers the question that matters first. */}
+          {outcome ? (
+            <div className="mt-6 border-t border-[#E6EDF9] pt-5">
+              <p className="text-sm font-medium text-[#111827]">
+                How would you rate the service overall?{" "}
+                <span className="font-normal text-[#5E6F8A]">(optional)</span>
+              </p>
+
+              <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Overall rating">
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={overallRating === value}
+                    onClick={() => setOverallRating(overallRating === value ? null : value)}
+                    className={`h-11 w-11 rounded-xl border text-sm font-semibold transition ${
+                      overallRating !== null && value <= overallRating
+                        ? "border-[#356AF6] bg-[#356AF6] text-white"
+                        : "border-[#D9E3F3] text-[#5E6F8A] hover:bg-[#F7FAFF]"
+                    }`}
+                  >
+                    {value}
+                  </button>
+                ))}
+                <span className="self-center text-xs text-[#8794A8]">
+                  {overallRating ? `${overallRating} of 5` : "1 = poor, 5 = excellent"}
+                </span>
+              </div>
+
+              {overallRating ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowDetail((open) => !open)}
+                    className="mt-3 text-sm font-medium text-[#356AF6] underline"
+                  >
+                    {showDetail ? "Hide the extra questions" : "Answer a few more (optional)"}
+                  </button>
+
+                  {showDetail ? (
+                    <div className="mt-3 space-y-4 rounded-xl bg-[#F7FAFF] p-4">
+                      {[
+                        { key: "quality", label: "Quality of the work" },
+                        { key: "timeliness", label: "Timeliness" },
+                        { key: "professionalism", label: "Professionalism" },
+                        { key: "communication", label: "Communication" },
+                      ].map((row) => (
+                        <div key={row.key} className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-sm text-[#111827]">{row.label}</span>
+                          <span className="flex gap-1" role="group" aria-label={row.label}>
+                            {[1, 2, 3, 4, 5].map((value) => (
+                              <button
+                                key={value}
+                                type="button"
+                                aria-pressed={detailRatings[row.key] === value}
+                                onClick={() =>
+                                  setDetailRatings((current) => {
+                                    const next = { ...current };
+                                    if (next[row.key] === value) delete next[row.key];
+                                    else next[row.key] = value;
+                                    return next;
+                                  })
+                                }
+                                className={`h-8 w-8 rounded-lg border text-xs font-semibold ${
+                                  detailRatings[row.key] !== undefined && value <= detailRatings[row.key]
+                                    ? "border-[#356AF6] bg-[#356AF6] text-white"
+                                    : "border-[#D9E3F3] text-[#5E6F8A]"
+                                }`}
+                              >
+                                {value}
+                              </button>
+                            ))}
+                          </span>
+                        </div>
+                      ))}
+
+                      {[
+                        { label: "Was the work as agreed?", value: scopeAsAgreed, set: setScopeAsAgreed },
+                        { label: "Would you recommend this provider?", value: wouldRecommend, set: setWouldRecommend },
+                        { label: "Would you use SmartLink again?", value: wouldUseAgain, set: setWouldUseAgain },
+                      ].map((row) => (
+                        <div key={row.label} className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-sm text-[#111827]">{row.label}</span>
+                          <span className="flex gap-2">
+                            {[
+                              { label: "Yes", answer: true },
+                              { label: "No", answer: false },
+                            ].map((option) => (
+                              <button
+                                key={option.label}
+                                type="button"
+                                aria-pressed={row.value === option.answer}
+                                onClick={() => row.set(row.value === option.answer ? null : option.answer)}
+                                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                                  row.value === option.answer
+                                    ? "border-[#356AF6] bg-[#356AF6] text-white"
+                                    : "border-[#D9E3F3] text-[#5E6F8A]"
+                                }`}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {/* The public review is opt-in and moderated. It is a
+                      separate record from this survey, which stays
+                      confidential. */}
+                  <label className="mt-4 flex items-start gap-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={publicReviewOptIn}
+                      onChange={(event) => setPublicReviewOptIn(event.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span className="text-[#111827]">
+                      Publish my rating and comment as a public review
+                      <span className="block text-xs text-[#5E6F8A]">
+                        Reviewed before it appears. Your other answers stay private either way.
+                      </span>
+                    </span>
+                  </label>
+                </>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="mt-4">

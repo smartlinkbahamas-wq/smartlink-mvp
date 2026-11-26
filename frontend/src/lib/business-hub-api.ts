@@ -22,6 +22,8 @@ import type {
   QuickCostEstimate,
   Quotation,
   QuotationInput,
+  PendingSurveyJob,
+  ProviderSurveyInput,
   DayAvailability,
   WorkingHoursDay,
 } from "@/types";
@@ -581,4 +583,18 @@ export async function getAvailability(token: string, date: string, duration?: nu
   if (duration) params.set("duration", String(duration));
   const res = await request<{ data: DayAvailability }>(`/calendar/availability?${params}`, token);
   return res.data;
+}
+
+// --- Surveys ----------------------------------------------------------------
+
+export async function listPendingSurveys(token: string) {
+  const res = await request<{ data: { jobs: PendingSurveyJob[] } }>("/surveys/pending", token);
+  return res.data.jobs || [];
+}
+
+export async function submitProviderSurvey(payload: ProviderSurveyInput, token: string) {
+  return request<{ message: string; data: unknown }>("/surveys/provider", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

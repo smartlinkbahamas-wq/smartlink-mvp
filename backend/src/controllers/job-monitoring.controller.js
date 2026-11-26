@@ -15,6 +15,16 @@ const { requireSupabase } = require("../utils/supabase-guard");
  * they do not.
  */
 
+const rating = z.coerce.number().int().min(1).max(5);
+
+/**
+ * The confirmation and the satisfaction survey arrive together, because the
+ * customer sees one screen rather than two messages.
+ *
+ * Only `outcome` is required. Everything from overallRating down is optional:
+ * a form demanding nine answers is one most people abandon, and a confirmation
+ * with no rating is still worth far more than no confirmation at all.
+ */
 const confirmationSchema = z.object({
   outcome: z.enum([
     "completed_satisfactorily",
@@ -24,6 +34,16 @@ const confirmationSchema = z.object({
   ]),
   comments: z.string().trim().max(2000).optional().or(z.literal("")),
   supportRequested: z.boolean().optional(),
+
+  overallRating: rating.optional(),
+  qualityRating: rating.optional(),
+  timelinessRating: rating.optional(),
+  professionalismRating: rating.optional(),
+  communicationRating: rating.optional(),
+  scopeAsAgreed: z.boolean().optional(),
+  wouldRecommend: z.boolean().optional(),
+  wouldUseAgain: z.boolean().optional(),
+  publicReviewOptIn: z.boolean().optional(),
 });
 
 const attemptSchema = z.object({
@@ -134,6 +154,30 @@ async function submitConfirmation(req, res) {
     secureLinkId: link.id,
   });
 
+  // The survey is recorded after the confirmation and cannot undo it. A
+  // customer who answered the confirmation but hit a problem on the survey has
+  // still answered the question that matters.
+  let surveyRecorded = false;
+  if (payload.overallRating) {
+    try {
+      const supabase = requireSupabase();
+      const { data: job } = await supabase
+        .from("jobs")
+        .select("expert_id, lead_id")
+        .eq("id", link.subject_id)
+        .maybeSingle();
+
+      const { submitCustomerSurvey } = require("../services/survey.service");
+      await submitCustomerSurvey(link.subject_id, payload, {
+        expertId: job?.expert_id || null,
+        leadId: job?.lead_id || null,
+      });
+      surveyRecorded = true;
+    } catch (surveyError) {
+      console.warn("[surveys] confirmation recorded but survey was not:", surveyError.message);
+    }
+  }
+
   await consumeSecureLink(link.id, { detail: payload.outcome, context });
 
   const messages = {
@@ -146,7 +190,7 @@ async function submitConfirmation(req, res) {
   return res.json({
     success: true,
     message: messages[payload.outcome],
-    data: { outcome: payload.outcome, jobStatus: result.jobStatus },
+    data: { outcome: payload.outcome, jobStatus: result.jobStatus, surveyRecorded },
   });
 }
 

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Briefcase, CalendarClock, Loader2, Plus, TriangleAlert, X } from "lucide-react";
+import { Briefcase, CalendarClock, Loader2, MessageSquareQuote, Plus, TriangleAlert, X } from "lucide-react";
 
 import { getAdminAccessToken, getSessionMe } from "@/lib/admin-session";
 import { canUseExpertSection } from "@/lib/role-guard";
@@ -11,9 +11,11 @@ import {
   createManualJob,
   updateJobStatus,
   reviseJobDate,
+  listPendingSurveys,
+  submitProviderSurvey,
   formatMoney,
 } from "@/lib/business-hub-api";
-import type { Job } from "@/types";
+import type { Job, PendingSurveyJob } from "@/types";
 
 /**
  * Jobs: work that was actually awarded.
@@ -85,6 +87,15 @@ export default function JobsPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
+  // Follow-up surveys on closed jobs. Only resultedInJob is required; the rest
+  // is optional, and the provider is never asked what they earned.
+  const [pendingSurveys, setPendingSurveys] = useState<PendingSurveyJob[]>([]);
+  const [surveyFor, setSurveyFor] = useState<PendingSurveyJob | null>(null);
+  const [surveyAnswers, setSurveyAnswers] = useState<Record<string, boolean | null>>({});
+  const [surveySuggestions, setSurveySuggestions] = useState("");
+  const [savingSurvey, setSavingSurvey] = useState(false);
+  const [surveyError, setSurveyError] = useState("");
+
   useEffect(() => {
     let active = true;
     async function load() {
@@ -102,6 +113,15 @@ export default function JobsPage() {
         }
         const rows = await listJobs(token);
         if (active) setJobs(rows);
+
+        // Secondary, in its own try/catch: the jobs list must still render if
+        // the surveys table is not installed on this environment.
+        try {
+          const pending = await listPendingSurveys(token);
+          if (active) setPendingSurveys(pending);
+        } catch (surveyErr) {
+          console.warn("Could not load pending surveys:", surveyErr);
+        }
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : "Could not load your jobs.");
       } finally {
@@ -178,6 +198,43 @@ export default function JobsPage() {
     });
   }
 
+  async function handleSubmitSurvey() {
+    if (!surveyFor) return;
+    const token = requireToken();
+    if (!token) return;
+
+    setSavingSurvey(true);
+    setSurveyError("");
+
+    try {
+      const result = await submitProviderSurvey(
+        {
+          jobId: surveyFor.id,
+          // The one required answer: the provider's own account of whether the
+          // opportunity became work, which the platform compares against what
+          // its jobs table says.
+          resultedInJob: surveyAnswers.resultedInJob ?? true,
+          wasCompleted: surveyAnswers.wasCompleted,
+          requestDescribedAccurately: surveyAnswers.requestDescribedAccurately,
+          customerResponsive: surveyAnswers.customerResponsive,
+          opportunityWorthwhile: surveyAnswers.opportunityWorthwhile,
+          wouldAcceptSimilar: surveyAnswers.wouldAcceptSimilar,
+          suggestions: surveySuggestions.trim() || undefined,
+        },
+        token,
+      );
+      setPendingSurveys((rows) => rows.filter((row) => row.id !== surveyFor.id));
+      setNotice(result.message);
+      setSurveyFor(null);
+      setSurveyAnswers({});
+      setSurveySuggestions("");
+    } catch (err) {
+      setSurveyError(err instanceof Error ? err.message : "Could not send your answers.");
+    } finally {
+      setSavingSurvey(false);
+    }
+  }
+
   async function handleAdd() {
     const token = requireToken();
     if (!token) return;
@@ -248,6 +305,45 @@ export default function JobsPage() {
           Add a job
         </button>
       </div>
+
+      {pendingSurveys.length > 0 ? (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/50 dark:bg-blue-900/20">
+          <div className="flex flex-wrap items-start gap-3">
+            <MessageSquareQuote className="mt-0.5 h-5 w-5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-blue-900 dark:text-blue-200">
+                How did {pendingSurveys.length === 1 ? "this job" : `these ${pendingSurveys.length} jobs`} go?
+              </p>
+              <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">
+                A few quick questions help us send you better opportunities. We will never ask what
+                you earned.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {pendingSurveys.slice(0, 4).map((job) => (
+                  <button
+                    key={job.id}
+                    type="button"
+                    onClick={() => {
+                      setSurveyFor(job);
+                      setSurveyAnswers({ resultedInJob: true });
+                      setSurveySuggestions("");
+                      setSurveyError("");
+                    }}
+                    className="rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-700 dark:bg-gray-800 dark:text-blue-300"
+                  >
+                    {job.reference} · {job.job_name}
+                  </button>
+                ))}
+                {pendingSurveys.length > 4 ? (
+                  <span className="self-center text-xs text-blue-800 dark:text-blue-300">
+                    and {pendingSurveys.length - 4} more
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {overdue.length > 0 ? (
         <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300">
@@ -365,6 +461,110 @@ export default function JobsPage() {
           })}
         </ul>
       )}
+
+      {surveyFor ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 py-10" role="dialog" aria-modal="true" aria-labelledby="survey-title" onClick={() => !savingSurvey && setSurveyFor(null)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-800" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h2 id="survey-title" className="text-lg font-semibold text-gray-900 dark:text-white">
+                  How did it go?
+                </h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  {surveyFor.reference} · {surveyFor.job_name} · {surveyFor.customer_name}
+                </p>
+              </div>
+              <button type="button" onClick={() => setSurveyFor(null)} disabled={savingSurvey} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-700" aria-label="Close">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {surveyError ? (
+              <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300">
+                {surveyError}
+              </div>
+            ) : null}
+
+            <div className="space-y-3">
+              {[
+                { key: "resultedInJob", label: "Did this SmartLink opportunity result in actual work?", required: true },
+                { key: "wasCompleted", label: "Was the work completed?" },
+                { key: "requestDescribedAccurately", label: "Did the request describe the work accurately?" },
+                { key: "customerResponsive", label: "Was the customer responsive?" },
+                { key: "opportunityWorthwhile", label: "Was the opportunity worthwhile?" },
+                { key: "wouldAcceptSimilar", label: "Would you accept similar opportunities?" },
+              ].map((row) => (
+                <div key={row.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-gray-50 p-3 dark:bg-gray-700/40">
+                  <span className="text-sm text-gray-900 dark:text-white">
+                    {row.label}
+                    {row.required ? null : <span className="ml-1 text-xs text-gray-500">(optional)</span>}
+                  </span>
+                  <span className="flex gap-2">
+                    {[
+                      { label: "Yes", answer: true },
+                      { label: "No", answer: false },
+                    ].map((option) => (
+                      <button
+                        key={option.label}
+                        type="button"
+                        aria-pressed={surveyAnswers[row.key] === option.answer}
+                        onClick={() =>
+                          setSurveyAnswers((current) => ({
+                            ...current,
+                            [row.key]:
+                              current[row.key] === option.answer && !row.required ? null : option.answer,
+                          }))
+                        }
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                          surveyAnswers[row.key] === option.answer
+                            ? "border-blue-600 bg-blue-600 text-white"
+                            : "border-gray-300 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+              ))}
+
+              <div>
+                <label htmlFor="survey-suggestions" className="mb-1 block text-sm font-medium text-gray-900 dark:text-white">
+                  Anything that would make these opportunities better?{" "}
+                  <span className="font-normal text-gray-500">(optional)</span>
+                </label>
+                <textarea
+                  id="survey-suggestions"
+                  rows={3}
+                  value={surveySuggestions}
+                  onChange={(e) => setSurveySuggestions(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 p-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-900 dark:text-white"
+                />
+              </div>
+
+              <p className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-700/40 dark:text-gray-300">
+                We never ask what you charged or what you earned. These answers are used to improve
+                the opportunities we send you.
+              </p>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setSurveyFor(null)} disabled={savingSurvey} className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Not now
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitSurvey}
+                disabled={savingSurvey || surveyAnswers.resultedInJob === undefined}
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {savingSurvey ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Send answers
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {addOpen ? (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 py-10" role="dialog" aria-modal="true" aria-labelledby="job-title" onClick={() => !saving && setAddOpen(false)}>
