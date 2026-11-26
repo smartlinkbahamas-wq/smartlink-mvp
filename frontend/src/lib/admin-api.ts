@@ -19,6 +19,13 @@ import type {
   LeadAssignmentRecord,
   PlatformPricingSettings,
   AdminSuspiciousLeadReport,
+  JobAdminNote,
+  JobCompletionConfirmation,
+  JobMonitoringEvent,
+  JobMonitoringSettings,
+  JobNeedingAttention,
+  JobVerificationAttempt,
+  VerificationOutcome,
 } from "@/types";
 
 const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000/api";
@@ -430,4 +437,85 @@ export async function reviewSuspiciousLeadReport(
     token,
     { method: "PATCH", body: JSON.stringify(payload) },
   );
+}
+
+// --- Job monitoring ---------------------------------------------------------
+// Behind the existing lead.assign permission rather than a new one: the people
+// who triage leads are the people who chase jobs.
+
+export async function getJobsNeedingAttention(token: string) {
+  const response = await requestJson<{
+    success: boolean;
+    data: { settings: JobMonitoringSettings; jobs: JobNeedingAttention[] };
+  }>("/admin/job-monitoring/attention", token);
+  return response.data;
+}
+
+export async function getJobMonitoringDetail(token: string, jobId: string) {
+  const response = await requestJson<{
+    success: boolean;
+    data: {
+      events: JobMonitoringEvent[];
+      attempts: JobVerificationAttempt[];
+      notes: JobAdminNote[];
+      confirmation: JobCompletionConfirmation | null;
+    };
+  }>(`/admin/job-monitoring/${jobId}`, token);
+  return response.data;
+}
+
+export async function recordVerificationAttempt(
+  token: string,
+  jobId: string,
+  payload: { outcome: VerificationOutcome; notes?: string },
+) {
+  return requestJson<{
+    success: boolean;
+    message: string;
+    data: {
+      attemptsMade: number;
+      attemptsRequired: number;
+      customerReached: boolean;
+      canMarkUnverifiable: boolean;
+    };
+  }>(`/admin/job-monitoring/${jobId}/attempts`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function markJobUnverifiable(token: string, jobId: string, reason?: string) {
+  return requestJson<{ success: boolean; message: string; data: unknown }>(
+    `/admin/job-monitoring/${jobId}/unverifiable`,
+    token,
+    { method: "POST", body: JSON.stringify({ reason }) },
+  );
+}
+
+export async function addJobAdminNote(token: string, jobId: string, note: string) {
+  return requestJson<{ success: boolean; message: string; data: JobAdminNote }>(
+    `/admin/job-monitoring/${jobId}/notes`,
+    token,
+    { method: "POST", body: JSON.stringify({ note }) },
+  );
+}
+
+export async function getMonitoringSettings(token: string) {
+  const response = await requestJson<{ success: boolean; data: JobMonitoringSettings }>(
+    "/admin/job-monitoring/settings",
+    token,
+  );
+  return response.data;
+}
+
+export async function updateMonitoringSettings(
+  token: string,
+  payload: Partial<JobMonitoringSettings>,
+) {
+  const response = await requestJson<{ success: boolean; message: string; data: JobMonitoringSettings }>(
+    "/admin/job-monitoring/settings",
+    token,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+  return response.data;
 }

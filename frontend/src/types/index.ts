@@ -1087,3 +1087,92 @@ export interface DayAvailability {
     reason: "booked" | "blocked" | null;
   }>;
 }
+
+// ---------------------------------------------------------------------------
+// Job monitoring (Priority 3) — administrator view
+// ---------------------------------------------------------------------------
+
+export interface JobMonitoringSettings {
+  provider_reminder_days_before: number;
+  completion_request_days_after: number;
+  overdue_reminder_days_after: number;
+  admin_notify_days_after: number;
+  escalation_days_after: number;
+  unverifiable_after_days: number;
+  required_phone_attempts: number;
+  send_extra_reminder_before_calls: boolean;
+  installed?: boolean;
+}
+
+export type VerificationOutcome =
+  | "no_answer"
+  | "voicemail"
+  | "wrong_number"
+  | "reached_confirmed"
+  | "reached_disputed"
+  | "reached_no_comment";
+
+export interface JobVerificationAttempt {
+  id: string;
+  attempt_number: number;
+  attempted_at: string;
+  outcome: VerificationOutcome;
+  notes: string | null;
+}
+
+export interface JobCompletionConfirmation {
+  job_id: string;
+  outcome:
+    | "completed_satisfactorily"
+    | "completed_with_concerns"
+    | "partially_completed"
+    | "not_completed";
+  comments: string | null;
+  support_requested: boolean;
+  confirmed_at: string;
+}
+
+export interface JobAdminNote {
+  id: string;
+  note: string;
+  created_at: string;
+}
+
+export interface JobMonitoringEvent {
+  job_id: string;
+  event_type: string;
+  created_at: string;
+}
+
+/** A job the administrator may need to act on. Never carries cost or margin. */
+export interface JobNeedingAttention {
+  id: string;
+  expert_id: string;
+  reference: string;
+  customer_name: string;
+  customer_email: string | null;
+  customer_phone: string | null;
+  job_name: string;
+  status: string;
+  source: "smartlink" | "provider_entered";
+  agreed_price: number | null;
+  currency: string;
+  expected_completion_date: string | null;
+  original_expected_completion_date: string | null;
+  actual_completion_date: string | null;
+  created_at: string;
+  provider_name: string | null;
+  provider_email: string | null;
+  // All server-derived.
+  days_overdue: number;
+  is_overdue: boolean;
+  notices_sent: string[];
+  reminders_answered: boolean | null;
+  escalated: boolean;
+  confirmation: JobCompletionConfirmation | null;
+  verification_attempts: number;
+  customer_reached: boolean;
+  awaiting_customer_days: number | null;
+  needs_telephone_verification: boolean;
+  can_mark_unverifiable: boolean;
+}

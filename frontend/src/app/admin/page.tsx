@@ -8,6 +8,7 @@ import Link from "next/link";
 import {
   ChevronRight,
   Inbox,
+  Briefcase,
   LayoutDashboard,
   LogOut,
   ScrollText,
@@ -65,6 +66,12 @@ import {
   reviewAdminExpertIntro,
   getSuspiciousLeadReports,
   reviewSuspiciousLeadReport,
+  getJobsNeedingAttention,
+  getJobMonitoringDetail,
+  recordVerificationAttempt,
+  markJobUnverifiable,
+  addJobAdminNote,
+  updateMonitoringSettings,
 } from "@/lib/admin-api";
 import { clearAdminSession, getAdminAccessToken, logoutCurrentSession } from "@/lib/admin-session";
 import { canAccessAdminArea } from "@/lib/role-guard";
@@ -90,6 +97,11 @@ import type {
   LeadAssignmentRecord,
   PlatformPricingSettings,
   ReviewModerationRecommendationRecord,
+  JobMonitoringSettings,
+  JobNeedingAttention,
+  JobVerificationAttempt,
+  JobAdminNote,
+  VerificationOutcome,
 } from "@/types";
 
 function can(me: AdminMe | null, permission: string) {
@@ -134,6 +146,20 @@ function formatDateTime(value?: string | null) {
   return date.toLocaleString();
 }
 
+/**
+ * A plain date, with no time and no timezone conversion.
+ *
+ * Job dates are stored as a bare date, so parsing at local noon keeps them on
+ * the day they were recorded -- `new Date("2026-12-01")` is UTC midnight,
+ * which reads as 30 November anywhere west of Greenwich.
+ */
+function formatDateOnly(value?: string | null) {
+  if (!value) return "not set";
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return "not set";
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
 function mapAuditAction(action: string) {
   const map: Record<string, string> = {
     role_assign: "Assigned a role",
@@ -169,8 +195,36 @@ function mapAuditAction(action: string) {
   return map[action] || action.replaceAll("_", " ");
 }
 
-type TabKey = "overview" | "experts" | "leads" | "team" | "categories" | "settings" | "activity";
+type TabKey = "overview" | "experts" | "leads" | "jobs" | "team" | "categories" | "settings" | "activity";
 type ExpertsSubTabKey = "directory" | "applications" | "reviews" | "performance";
+const JOB_STATUS_LABELS: Record<string, string> = {
+  awarded: "Awarded",
+  scheduled: "Scheduled",
+  in_progress: "In progress",
+  delayed: "Delayed",
+  provider_completed: "Awaiting customer",
+  customer_confirmed: "Confirmed",
+  disputed: "Disputed",
+  cancelled: "Cancelled",
+  unverifiable: "Unverifiable",
+};
+
+const CONFIRMATION_LABELS: Record<string, string> = {
+  completed_satisfactorily: "Completed satisfactorily",
+  completed_with_concerns: "Completed, with concerns",
+  partially_completed: "Only partially completed",
+  not_completed: "Not completed",
+};
+
+const CALL_OUTCOMES: Array<{ value: VerificationOutcome; label: string }> = [
+  { value: "no_answer", label: "No answer" },
+  { value: "voicemail", label: "Left a voicemail" },
+  { value: "wrong_number", label: "Wrong number" },
+  { value: "reached_confirmed", label: "Reached — confirmed the work was done" },
+  { value: "reached_disputed", label: "Reached — disputed the work" },
+  { value: "reached_no_comment", label: "Reached — would not say" },
+];
+
 const SUSPICIOUS_REASON_LABELS: Record<string, string> = {
   fake_customer: "Suspected fake customer or impersonation",
   payment_scam: "Suspicious payment request or possible scam",
@@ -230,6 +284,16 @@ export default function AdminPage() {
   const [leadAssignments, setLeadAssignments] = useState<LeadAssignmentRecord[]>([]);
   const [leadEscalations, setLeadEscalations] = useState<AdminLeadEscalationRecord[]>([]);
   const [suspiciousReports, setSuspiciousReports] = useState<AdminSuspiciousLeadReport[]>([]);
+  const [jobsNeedingAttention, setJobsNeedingAttention] = useState<JobNeedingAttention[]>([]);
+  const [monitoringSettings, setMonitoringSettings] = useState<JobMonitoringSettings | null>(null);
+  const [openJobId, setOpenJobId] = useState<string | null>(null);
+  const [jobDetail, setJobDetail] = useState<{
+    attempts: JobVerificationAttempt[];
+    notes: JobAdminNote[];
+  } | null>(null);
+  const [jobNoteDraft, setJobNoteDraft] = useState("");
+  const [callOutcome, setCallOutcome] = useState<VerificationOutcome>("no_answer");
+  const [callNotes, setCallNotes] = useState("");
   const [reviewNotesDraft, setReviewNotesDraft] = useState<Record<string, string>>({});
   const [matchOverrides, setMatchOverrides] = useState<AdminMatchOverrideRecord[]>([]);
   const [expertPerformance, setExpertPerformance] = useState<AdminExpertPerformanceRecord[]>([]);
@@ -310,6 +374,13 @@ export default function AdminPage() {
       { key: "overview" as const, label: "Overview", helper: "Quick health and next actions.", icon: LayoutDashboard, enabled: true },
       { key: "experts" as const, label: "Experts", helper: "Review and manage expert availability.", icon: Users, enabled: can(me, "expert.view") },
       { key: "leads" as const, label: "Leads", helper: "Route leads to the right expert.", icon: Inbox, enabled: can(me, "lead.assign") || can(me, "report.view") },
+      {
+        key: "jobs" as const,
+        label: "Jobs",
+        helper: "Chase overdue work and verify completions.",
+        icon: Briefcase,
+        enabled: can(me, "lead.assign"),
+      },
       { key: "team" as const, label: "Team", helper: "Manage admin roles by email.", icon: UserCog, enabled: can(me, "user.role.manage") },
       {
         key: "settings" as const,
@@ -428,6 +499,12 @@ export default function AdminPage() {
         getLeadAssignments(accessToken).then(setLeadAssignments).catch(() => undefined),
         getLeadEscalations(accessToken).then(setLeadEscalations).catch(() => undefined),
         getSuspiciousLeadReports(accessToken).then(setSuspiciousReports).catch(() => undefined),
+        getJobsNeedingAttention(accessToken)
+          .then((result) => {
+            setJobsNeedingAttention(result.jobs || []);
+            setMonitoringSettings(result.settings || null);
+          })
+          .catch(() => undefined),
         getExpertPerformance(accessToken).then(setExpertPerformance).catch(() => undefined),
         searchLeads(accessToken, "").then(setLeadOptions).catch(() => undefined),
         getModerationReviews(accessToken).then(setModerationReviews).catch(() => undefined),
@@ -2361,6 +2438,305 @@ export default function AdminPage() {
             ) : (
               <p className="text-sm text-[#6A7C98]">You do not have permission for leads in this role.</p>
             )}
+              </section>
+            ) : null}
+
+            {activeTab === "jobs" ? (
+              <section className="rounded-2xl border border-[#E2EAF8] bg-white p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold">Jobs needing attention</h2>
+                    <p className="mt-1 text-sm text-[#62728C]">
+                      Overdue work, and completions the customer has not confirmed. Silence is never
+                      treated as confirmation.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-full bg-[#FFF0F2] px-3 py-1 font-semibold text-[#C8234C]">
+                      {jobsNeedingAttention.filter((job) => job.is_overdue).length} overdue
+                    </span>
+                    <span className="rounded-full bg-[#FFF7E6] px-3 py-1 font-semibold text-[#A3620A]">
+                      {jobsNeedingAttention.filter((job) => job.needs_telephone_verification).length} need a call
+                    </span>
+                  </div>
+                </div>
+
+                {monitoringSettings ? (
+                  <p className="mt-3 rounded-xl bg-[#F7FAFF] px-3 py-2 text-xs text-[#5E6F8A]">
+                    Current schedule: remind the provider {monitoringSettings.provider_reminder_days_before} day(s)
+                    before · overdue notice after {monitoringSettings.overdue_reminder_days_after} day(s) ·
+                    administrator notified at {monitoringSettings.admin_notify_days_after} ·
+                    escalated at {monitoringSettings.escalation_days_after} · telephone the customer after{" "}
+                    {monitoringSettings.unverifiable_after_days} day(s) of silence ·{" "}
+                    {monitoringSettings.required_phone_attempts} attempt(s) before a job may be marked unverifiable.
+                  </p>
+                ) : null}
+
+                <div className="mt-4 space-y-3">
+                  {jobsNeedingAttention.map((job) => {
+                    const isOpen = openJobId === job.id;
+
+                    return (
+                      <article key={job.id} className="rounded-xl border border-[#E1E9F8] bg-white p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-sm font-semibold">{job.job_name}</p>
+                              <span className="rounded-full bg-[#EEF3FF] px-2.5 py-1 text-xs font-semibold text-[#2759C9]">
+                                {JOB_STATUS_LABELS[job.status] || job.status}
+                              </span>
+                              {job.is_overdue ? (
+                                <span className="rounded-full bg-[#FFF0F2] px-2.5 py-1 text-xs font-semibold text-[#C8234C]">
+                                  {job.days_overdue} day(s) overdue
+                                </span>
+                              ) : null}
+                              {job.escalated ? (
+                                <span className="rounded-full bg-[#FFF0F2] px-2.5 py-1 text-xs font-semibold text-[#C8234C]">
+                                  Escalated
+                                </span>
+                              ) : null}
+                              {job.needs_telephone_verification ? (
+                                <span className="rounded-full bg-[#FFF7E6] px-2.5 py-1 text-xs font-semibold text-[#A3620A]">
+                                  Telephone the customer
+                                </span>
+                              ) : null}
+                              {/* Recorded at creation and never changed: it is what
+                                  keeps platform conversion figures honest. */}
+                              <span className="rounded-full bg-[#F1F4F9] px-2.5 py-1 text-xs font-semibold text-[#5E6F8A]">
+                                {job.source === "smartlink" ? "From SmartLink" : "Provider's own"}
+                              </span>
+                            </div>
+
+                            <p className="mt-1 text-xs text-[#62728C]">
+                              {job.reference} · Provider: {job.provider_name || job.expert_id} · Customer:{" "}
+                              {job.customer_name}
+                              {job.customer_phone ? ` · ${job.customer_phone}` : ""}
+                              {job.customer_email ? ` · ${job.customer_email}` : ""}
+                            </p>
+
+                            <p className="mt-1 text-xs text-[#62728C]">
+                              Expected {formatDateOnly(job.expected_completion_date)}
+                              {job.original_expected_completion_date &&
+                              job.original_expected_completion_date !== job.expected_completion_date
+                                ? ` (originally ${formatDateOnly(job.original_expected_completion_date)})`
+                                : ""}
+                              {job.actual_completion_date
+                                ? ` · Reported complete ${formatDateOnly(job.actual_completion_date)}`
+                                : ""}
+                              {job.awaiting_customer_days !== null
+                                ? ` · ${job.awaiting_customer_days} day(s) awaiting the customer`
+                                : ""}
+                            </p>
+
+                            <p className="mt-1 text-xs text-[#8794A8]">
+                              Notices sent: {job.notices_sent.length > 0 ? job.notices_sent.map((n) => n.replace(/_/g, " ")).join(", ") : "none yet"}
+                              {job.verification_attempts > 0
+                                ? ` · ${job.verification_attempts} telephone attempt(s)`
+                                : ""}
+                              {job.customer_reached ? " · customer was reached" : ""}
+                            </p>
+
+                            {job.confirmation ? (
+                              <p className="mt-2 rounded-lg bg-[#F7FAFF] px-3 py-2 text-xs text-[#4A5A75]">
+                                <span className="font-semibold">Customer said:</span>{" "}
+                                {CONFIRMATION_LABELS[job.confirmation.outcome] || job.confirmation.outcome}
+                                {job.confirmation.comments ? ` — ${job.confirmation.comments}` : ""}
+                              </p>
+                            ) : null}
+                          </div>
+
+                          <div className="text-right">
+                            {job.agreed_price !== null ? (
+                              <p className="text-sm font-semibold">
+                                {Number(job.agreed_price).toLocaleString("en-US", {
+                                  style: "currency",
+                                  currency: job.currency || "USD",
+                                })}
+                              </p>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="mt-2 rounded-lg border border-[#D6E1F4] bg-white px-3 py-1.5 text-sm font-semibold text-[#2E67E8]"
+                              onClick={async () => {
+                                if (isOpen) {
+                                  setOpenJobId(null);
+                                  setJobDetail(null);
+                                  return;
+                                }
+                                setOpenJobId(job.id);
+                                setJobDetail(null);
+                                setJobNoteDraft("");
+                                setCallNotes("");
+                                setCallOutcome("no_answer");
+                                try {
+                                  const detail = await getJobMonitoringDetail(token, job.id);
+                                  setJobDetail({ attempts: detail.attempts, notes: detail.notes });
+                                } catch (detailError) {
+                                  setError(
+                                    detailError instanceof Error
+                                      ? detailError.message
+                                      : "Could not load that job.",
+                                  );
+                                }
+                              }}
+                            >
+                              {isOpen ? "Close" : "Open"}
+                            </button>
+                          </div>
+                        </div>
+
+                        {isOpen ? (
+                          <div className="mt-4 space-y-4 border-t border-[#E6EDF9] pt-4">
+                            {/* Telephone attempts: the Unverifiable workflow. */}
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">
+                                Telephone attempts
+                              </p>
+                              {jobDetail === null ? (
+                                <p className="mt-1 text-sm text-[#6A7C98]">Loading…</p>
+                              ) : jobDetail.attempts.length === 0 ? (
+                                <p className="mt-1 text-sm text-[#6A7C98]">No calls recorded yet.</p>
+                              ) : (
+                                <ul className="mt-1 space-y-1">
+                                  {jobDetail.attempts.map((attempt) => (
+                                    <li key={attempt.id} className="text-sm text-[#4A5A75]">
+                                      Attempt {attempt.attempt_number} ·{" "}
+                                      {CALL_OUTCOMES.find((o) => o.value === attempt.outcome)?.label ||
+                                        attempt.outcome}{" "}
+                                      · {formatDateTime(attempt.attempted_at)}
+                                      {attempt.notes ? ` — ${attempt.notes}` : ""}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+
+                              <div className="mt-2 flex flex-wrap items-end gap-2">
+                                <label className="sr-only" htmlFor={`call-${job.id}`}>
+                                  What happened on the call
+                                </label>
+                                <select
+                                  id={`call-${job.id}`}
+                                  value={callOutcome}
+                                  onChange={(event) => setCallOutcome(event.target.value as VerificationOutcome)}
+                                  className="h-10 rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                                >
+                                  {CALL_OUTCOMES.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  value={callNotes}
+                                  onChange={(event) => setCallNotes(event.target.value)}
+                                  placeholder="Notes from the call (optional)"
+                                  className="h-10 min-w-[14rem] flex-1 rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                                  aria-label="Notes from the call"
+                                />
+                                <button
+                                  type="button"
+                                  className="h-10 rounded-xl bg-[#2E67E8] px-4 text-sm font-semibold text-white"
+                                  onClick={() =>
+                                    runAction(async () => {
+                                      await recordVerificationAttempt(token, job.id, {
+                                        outcome: callOutcome,
+                                        notes: callNotes.trim() || undefined,
+                                      });
+                                      const detail = await getJobMonitoringDetail(token, job.id);
+                                      setJobDetail({ attempts: detail.attempts, notes: detail.notes });
+                                      setCallNotes("");
+                                    }, "Call recorded.")
+                                  }
+                                >
+                                  Record call
+                                </button>
+                              </div>
+
+                              {job.can_mark_unverifiable ? (
+                                <button
+                                  type="button"
+                                  className="mt-2 rounded-xl bg-[#5E6F8A] px-4 py-2 text-sm font-semibold text-white"
+                                  onClick={() =>
+                                    runAction(
+                                      () =>
+                                        markJobUnverifiable(
+                                          token,
+                                          job.id,
+                                          "Completion could not be verified after the required telephone attempts.",
+                                        ),
+                                      "Marked unverifiable. It counts as neither confirmed nor disputed.",
+                                    )
+                                  }
+                                >
+                                  Mark unverifiable
+                                </button>
+                              ) : job.status === "provider_completed" && !job.confirmation ? (
+                                <p className="mt-2 text-xs text-[#8794A8]">
+                                  {job.customer_reached
+                                    ? "The customer was reached, so this cannot be marked unverifiable. Record what they said instead."
+                                    : `Record ${monitoringSettings?.required_phone_attempts ?? 2} telephone attempts before this can be marked unverifiable.`}
+                                </p>
+                              ) : null}
+                            </div>
+
+                            {/* Internal notes. Stored in their own table, never
+                                returned to a provider or a customer. */}
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">
+                                Internal notes
+                              </p>
+                              {jobDetail && jobDetail.notes.length > 0 ? (
+                                <ul className="mt-1 space-y-1">
+                                  {jobDetail.notes.map((note) => (
+                                    <li key={note.id} className="text-sm text-[#4A5A75]">
+                                      {note.note}{" "}
+                                      <span className="text-xs text-[#8794A8]">
+                                        ({formatDateTime(note.created_at)})
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="mt-1 text-sm text-[#6A7C98]">No notes yet.</p>
+                              )}
+
+                              <div className="mt-2 flex flex-wrap items-end gap-2">
+                                <input
+                                  value={jobNoteDraft}
+                                  onChange={(event) => setJobNoteDraft(event.target.value)}
+                                  placeholder="Record a follow-up action"
+                                  className="h-10 min-w-[16rem] flex-1 rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                                  aria-label="Internal note"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={!jobNoteDraft.trim()}
+                                  className="h-10 rounded-xl border border-[#D6E1F4] bg-white px-4 text-sm font-semibold text-[#2E67E8] disabled:opacity-50"
+                                  onClick={() =>
+                                    runAction(async () => {
+                                      await addJobAdminNote(token, job.id, jobNoteDraft.trim());
+                                      const detail = await getJobMonitoringDetail(token, job.id);
+                                      setJobDetail({ attempts: detail.attempts, notes: detail.notes });
+                                      setJobNoteDraft("");
+                                    }, "Note saved.")
+                                  }
+                                >
+                                  Save note
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+
+                  {jobsNeedingAttention.length === 0 ? (
+                    <p className="text-sm text-[#6A7C98]">
+                      No jobs need attention. Overdue work and unconfirmed completions appear here.
+                    </p>
+                  ) : null}
+                </div>
               </section>
             ) : null}
 
