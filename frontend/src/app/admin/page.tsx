@@ -884,8 +884,8 @@ export default function AdminPage() {
   return (
     <main className="min-h-screen bg-[#F4F7FB] px-3 py-4 text-[#122033] sm:px-6">
       <div className="mx-auto w-full max-w-[1480px] space-y-4">
-        <section className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
-          <aside className="sticky top-4 self-start overflow-hidden rounded-[24px] border border-[#DDE7F5] bg-white shadow-[0_18px_38px_rgba(36,57,92,0.08)]">
+        <section className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]">
+          <aside className="lg:sticky lg:top-4 lg:self-start overflow-hidden rounded-[24px] border border-[#DDE7F5] bg-white shadow-[0_18px_38px_rgba(36,57,92,0.08)]">
             <div className="px-5 pb-5 pt-6">
               <Link href="/" className="inline-flex items-center">
                 <Image
