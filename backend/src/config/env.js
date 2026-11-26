@@ -50,6 +50,11 @@ const env = {
   // "Describe What You Need". Unset means the feature is simply unavailable
   // and customers go straight to the questionnaire -- which is the fallback
   // for every other failure too, so there is no separate path to maintain.
+  // "groq" or "gemini". The model defaults per provider; AI_MODEL overrides it
+  // without a deploy, which matters because providers retire models.
+  AI_PROVIDER: process.env.AI_PROVIDER || "groq",
+  AI_MODEL: process.env.AI_MODEL || "",
+  GROQ_API_KEY: process.env.GROQ_API_KEY || "",
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
   // Free tier allowance divided across instances, so N servers cannot together
   // exceed what one allowance covers.

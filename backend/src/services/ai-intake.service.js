@@ -25,12 +25,98 @@ const { env } = require("../config/env");
  * produces a lead that looks answered, scores zero, and silently omits itself
  * from the responses array.
  *
- * The provider sits behind one module and one env var. Switching from Gemini
- * is a config change plus one adapter.
+ * The provider sits behind the PROVIDERS table and two env vars, so switching
+ * is configuration plus one adapter.
  */
 
-const MODEL = "gemini-2.0-flash";
 const TIMEOUT_MS = 8000;
+
+/**
+ * Providers.
+ *
+ * The feature sits behind this table and two env vars, so moving between
+ * providers is configuration plus one adapter rather than a rewrite.
+ *
+ * A note learned the hard way: a hardcoded model id is a time bomb. Providers
+ * retire models, and gemini-2.0-flash was already gone by the time this was
+ * first wired up. AI_MODEL overrides the default without a deploy.
+ */
+const PROVIDERS = {
+  groq: {
+    label: "groq",
+    // The only two PRODUCTION Groq models that support json_schema structured
+    // outputs. Everything else falls back to a loose "JSON object mode" that
+    // does not honour the enums, which is the whole mechanism here.
+    defaultModel: "openai/gpt-oss-20b",
+    apiKeyName: "GROQ_API_KEY",
+    buildRequest(instruction, responseSchema, model) {
+      return {
+        url: "https://api.groq.com/openai/v1/chat/completions",
+        headers: { Authorization: `Bearer ${env.GROQ_API_KEY}` },
+        body: {
+          model,
+          messages: [{ role: "user", content: instruction }],
+          temperature: 0.1,
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "smartlink_intake",
+              // Best-effort rather than strict. Strict mode requires every
+              // property to be listed in `required`, which would force the
+              // model to emit urgency, budget and location whether or not the
+              // customer mentioned them -- exactly the guessing this feature
+              // must not do. The enums still steer it, and validateSuggestion
+              // is the real gate.
+              //
+              // additionalProperties is set here rather than on the shared
+              // schema: Groq recommends it, and Gemini's responseSchema
+              // dialect rejects the field outright.
+              schema: { ...responseSchema, additionalProperties: false },
+            },
+          },
+        },
+      };
+    },
+    extractText(payload) {
+      return payload?.choices?.[0]?.message?.content;
+    },
+  },
+
+  gemini: {
+    label: "gemini",
+    defaultModel: "gemini-2.5-flash-lite",
+    apiKeyName: "GEMINI_API_KEY",
+    buildRequest(instruction, responseSchema, model) {
+      return {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        headers: { "x-goog-api-key": env.GEMINI_API_KEY },
+        body: {
+          contents: [{ parts: [{ text: instruction }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema,
+            temperature: 0.1,
+          },
+        },
+      };
+    },
+    extractText(payload) {
+      return payload?.candidates?.[0]?.content?.parts?.[0]?.text;
+    },
+  },
+};
+
+function activeProvider() {
+  return PROVIDERS[env.AI_PROVIDER] || PROVIDERS.groq;
+}
+
+function activeModel() {
+  return env.AI_MODEL || activeProvider().defaultModel;
+}
+
+function activeKey() {
+  return env[activeProvider().apiKeyName] || "";
+}
 
 // Per process and in memory, like the rate limiters. Reset on deploy, which is
 // acceptable: this is a cost ceiling, not a security control.
@@ -62,7 +148,7 @@ function recordCall() {
 }
 
 function isConfigured() {
-  return Boolean(env.GEMINI_API_KEY);
+  return Boolean(activeKey());
 }
 
 /**
@@ -171,40 +257,39 @@ function validateSuggestion(raw, catalogue) {
  * Any failure here is a fallback, not an error: the customer continues to the
  * questionnaire with their text carried over.
  */
-async function callGemini(instruction, responseSchema) {
+async function callProvider(instruction, responseSchema) {
+  const provider = activeProvider();
+  const { url, headers, body } = provider.buildRequest(instruction, responseSchema, activeModel());
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": env.GEMINI_API_KEY,
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: instruction }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema,
-            temperature: 0.1,
-          },
-        }),
-        signal: controller.signal,
-      },
-    );
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
 
     if (!response.ok) {
-      const status = response.status;
+      // Read the provider's own words. Without this a 403 for "this model no
+      // longer exists" is indistinguishable from a bad key, and both show up
+      // as a silent fallback nobody can diagnose.
+      let detail = "";
+      try {
+        detail = (await response.text()).slice(0, 300);
+      } catch {
+        // The status alone will have to do.
+      }
+      console.warn(`[ai-intake] ${provider.label} ${activeModel()} -> HTTP ${response.status} ${detail}`);
       // 429 is the free tier running out, which is expected rather than
       // exceptional and is reported as such.
-      throw new Error(status === 429 ? "rate_limited" : `provider_error_${status}`);
+      throw new Error(response.status === 429 ? "rate_limited" : `provider_error_${response.status}`);
     }
 
     const payload = await response.json();
-    const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const text = provider.extractText(payload);
     if (!text) throw new Error("empty_response");
 
     return JSON.parse(text);
@@ -233,7 +318,7 @@ async function suggestFromDescription(description, catalogue) {
 
   try {
     recordCall();
-    const raw = await callGemini(instruction, responseSchema);
+    const raw = await callProvider(instruction, responseSchema);
     const { validated, dropped } = validateSuggestion(raw, catalogue);
 
     // Nothing usable came back. Treated as a failure rather than returning an
@@ -266,8 +351,8 @@ async function suggestFromDescription(description, catalogue) {
 function getStatus() {
   return {
     configured: isConfigured(),
-    provider: "gemini",
-    model: MODEL,
+    provider: activeProvider().label,
+    model: activeModel(),
     dailyLimit: dailyLimit(),
     usedToday: callCounts.day === today() ? callCounts.used : 0,
     remainingToday: remainingToday(),
@@ -276,7 +361,8 @@ function getStatus() {
 }
 
 module.exports = {
-  MODEL,
+  activeProvider,
+  activeModel,
   isConfigured,
   buildRequest,
   validateSuggestion,
