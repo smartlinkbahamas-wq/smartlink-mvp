@@ -27,6 +27,7 @@ import type {
   JobVerificationAttempt,
   VerificationOutcome,
   PendingDateRevision,
+  AdminReport,
 } from "@/types";
 
 const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000/api";
@@ -539,4 +540,12 @@ export async function reviewDateRevision(
     token,
     { method: "PATCH", body: JSON.stringify(payload) },
   );
+}
+
+export async function getPlatformReport(token: string) {
+  const response = await requestJson<{ success: boolean; data: AdminReport }>(
+    "/reports/platform",
+    token,
+  );
+  return response.data;
 }

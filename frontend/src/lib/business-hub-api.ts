@@ -24,6 +24,8 @@ import type {
   QuotationInput,
   PendingSurveyJob,
   ProviderSurveyInput,
+  ProviderReport,
+  ReportRate,
   DayAvailability,
   WorkingHoursDay,
 } from "@/types";
@@ -597,4 +599,17 @@ export async function submitProviderSurvey(payload: ProviderSurveyInput, token: 
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+// --- Reporting --------------------------------------------------------------
+
+export async function getMyReport(token: string) {
+  const res = await request<{ data: ProviderReport }>("/reports/mine", token);
+  return res.data;
+}
+
+/** Formats a rate as "2 of 9 (22.2%)", or "—" when there is nothing to divide. */
+export function formatRate(rate?: ReportRate | null) {
+  if (!rate || rate.denominator === 0) return "—";
+  return `${rate.numerator} of ${rate.denominator}${rate.percent !== null ? ` (${rate.percent}%)` : ""}`;
 }

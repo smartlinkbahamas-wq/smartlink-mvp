@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Inbox,
   Briefcase,
+  BarChart3,
   LayoutDashboard,
   LogOut,
   ScrollText,
@@ -74,6 +75,7 @@ import {
   updateMonitoringSettings,
   getPendingDateRevisions,
   reviewDateRevision,
+  getPlatformReport,
 } from "@/lib/admin-api";
 import { clearAdminSession, getAdminAccessToken, logoutCurrentSession } from "@/lib/admin-session";
 import { canAccessAdminArea } from "@/lib/role-guard";
@@ -105,6 +107,7 @@ import type {
   JobAdminNote,
   VerificationOutcome,
   PendingDateRevision,
+  AdminReport,
 } from "@/types";
 
 function can(me: AdminMe | null, permission: string) {
@@ -163,6 +166,17 @@ function formatDateOnly(value?: string | null) {
   return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
+/**
+ * "2 of 9 (22.2%)", or an em dash when there is nothing to divide.
+ *
+ * Never a bare percentage: 22% from nine inquiries reads as precision that is
+ * not there, and 0% from an empty platform is a different claim from "no data".
+ */
+function formatReportRate(rate?: { numerator: number; denominator: number; percent: number | null } | null) {
+  if (!rate || rate.denominator === 0) return "—";
+  return `${rate.numerator} of ${rate.denominator}${rate.percent !== null ? ` (${rate.percent}%)` : ""}`;
+}
+
 function mapAuditAction(action: string) {
   const map: Record<string, string> = {
     role_assign: "Assigned a role",
@@ -198,7 +212,7 @@ function mapAuditAction(action: string) {
   return map[action] || action.replaceAll("_", " ");
 }
 
-type TabKey = "overview" | "experts" | "leads" | "jobs" | "team" | "categories" | "settings" | "activity";
+type TabKey = "overview" | "experts" | "leads" | "jobs" | "reports" | "team" | "categories" | "settings" | "activity";
 type ExpertsSubTabKey = "directory" | "applications" | "reviews" | "performance";
 const JOB_STATUS_LABELS: Record<string, string> = {
   awarded: "Awarded",
@@ -299,6 +313,7 @@ export default function AdminPage() {
   const [callNotes, setCallNotes] = useState("");
   const [pendingDateRevisions, setPendingDateRevisions] = useState<PendingDateRevision[]>([]);
   const [revisionNotes, setRevisionNotes] = useState<Record<string, string>>({});
+  const [platformReport, setPlatformReport] = useState<AdminReport | null>(null);
   const [reviewNotesDraft, setReviewNotesDraft] = useState<Record<string, string>>({});
   const [matchOverrides, setMatchOverrides] = useState<AdminMatchOverrideRecord[]>([]);
   const [expertPerformance, setExpertPerformance] = useState<AdminExpertPerformanceRecord[]>([]);
@@ -385,6 +400,13 @@ export default function AdminPage() {
         helper: "Chase overdue work and verify completions.",
         icon: Briefcase,
         enabled: can(me, "lead.assign"),
+      },
+      {
+        key: "reports" as const,
+        label: "Reports",
+        helper: "Completion, satisfaction and where leads go.",
+        icon: BarChart3,
+        enabled: can(me, "report.view"),
       },
       { key: "team" as const, label: "Team", helper: "Manage admin roles by email.", icon: UserCog, enabled: can(me, "user.role.manage") },
       {
@@ -511,6 +533,7 @@ export default function AdminPage() {
           })
           .catch(() => undefined),
         getPendingDateRevisions(accessToken).then(setPendingDateRevisions).catch(() => undefined),
+        getPlatformReport(accessToken).then(setPlatformReport).catch(() => undefined),
         getExpertPerformance(accessToken).then(setExpertPerformance).catch(() => undefined),
         searchLeads(accessToken, "").then(setLeadOptions).catch(() => undefined),
         getModerationReviews(accessToken).then(setModerationReviews).catch(() => undefined),
@@ -2863,6 +2886,223 @@ export default function AdminPage() {
                     </p>
                   ) : null}
                 </div>
+              </section>
+            ) : null}
+
+            {activeTab === "reports" ? (
+              <section className="space-y-5">
+                {!platformReport ? (
+                  <p className="rounded-2xl border border-[#E2EAF8] bg-white p-5 text-sm text-[#6A7C98]">
+                    Figures are not available.
+                  </p>
+                ) : (
+                  <>
+                    {/* Where leads actually go. Each step measured against the
+                        step before it, never against the original total. */}
+                    <div className="rounded-2xl border border-[#E2EAF8] bg-white p-5">
+                      <h2 className="text-lg font-semibold">Where inquiries go</h2>
+                      <p className="mt-1 text-sm text-[#62728C]">
+                        Each step is measured against the step before it, and every figure shows the
+                        numbers it came from.
+                      </p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {[
+                          { label: "Inquiries received", value: String(platformReport.funnel.leads) },
+                          { label: "Reached an expert", value: formatReportRate(platformReport.funnel.reachedAnExpert) },
+                          { label: "Accepted by an expert", value: formatReportRate(platformReport.funnel.acceptedByAnExpert) },
+                          { label: "Quotations sent", value: String(platformReport.funnel.quotationsSent) },
+                          { label: "Quotations approved", value: formatReportRate(platformReport.funnel.quotationsApproved) },
+                          { label: "Inquiries that became work", value: formatReportRate(platformReport.funnel.leadsBecomingWork) },
+                        ].map((row) => (
+                          <div key={row.label} className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">{row.label}</p>
+                            <p className="mt-1 text-xl font-bold text-[#111827]">{row.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-3 text-xs text-[#8794A8]">
+                        {platformReport.funnel.jobsFromSmartLink} job(s) came from SmartLink;{" "}
+                        {platformReport.funnel.jobsFromProviders} were entered by providers for their
+                        own customers and are excluded from the conversion figure above.
+                      </p>
+                    </div>
+
+                    {/* Group 1 */}
+                    <div className="rounded-2xl border border-[#E2EAF8] bg-white p-5">
+                      <h2 className="text-lg font-semibold">Job completion and timeliness</h2>
+                      <p className="mt-1 text-sm text-[#62728C]">
+                        Completion states are counted separately and never added together. Work a
+                        provider reported complete is a different claim from work a customer
+                        confirmed.
+                      </p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        {[
+                          { label: "Still open", value: platformReport.completion.stillOpen },
+                          { label: "Provider reported complete", value: platformReport.completion.providerReportedComplete },
+                          { label: "Customer confirmed", value: platformReport.completion.customerConfirmed },
+                          { label: "Disputed", value: platformReport.completion.disputed },
+                          { label: "Unverifiable", value: platformReport.completion.unverifiable },
+                          { label: "Cancelled", value: platformReport.completion.cancelled },
+                          { label: "Currently overdue", value: platformReport.completion.currentlyOverdue },
+                        ].map((row) => (
+                          <div key={row.label} className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">{row.label}</p>
+                            <p className="mt-1 text-xl font-bold text-[#111827]">{row.value}</p>
+                          </div>
+                        ))}
+                        <div className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">Value of confirmed work</p>
+                          <p className="mt-1 text-xl font-bold text-[#111827]">
+                            {platformReport.completion.valueOfConfirmedWork.toLocaleString("en-US", { style: "currency", currency: "USD" })}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-xl bg-[#F7FAFF] p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">Confirmed by the customer</p>
+                          <p className="mt-1 text-lg font-bold text-[#111827]">{formatReportRate(platformReport.completion.confirmationRate)}</p>
+                          <p className="mt-1 text-xs text-[#8794A8]">Of jobs that reached an outcome, including unverifiable ones.</p>
+                        </div>
+                        <div className="rounded-xl bg-[#F7FAFF] p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">Finished on time</p>
+                          <p className="mt-1 text-lg font-bold text-[#111827]">{formatReportRate(platformReport.completion.onTime)}</p>
+                          <p className="mt-1 text-xs text-[#8794A8]">Measured against the ORIGINAL expected date, not the latest extension.</p>
+                        </div>
+                      </div>
+                      <p className="mt-3 text-xs text-[#8794A8]">
+                        Job values are shown. Provider costs and margins are not available to
+                        administrators and are not fetched by this report.
+                      </p>
+                    </div>
+
+                    {/* Group 2 */}
+                    <div className="rounded-2xl border border-[#E2EAF8] bg-white p-5">
+                      <h2 className="text-lg font-semibold">Customer and provider satisfaction</h2>
+                      <p className="mt-1 text-sm text-[#62728C]">
+                        Response rate first, deliberately: an average with no response rate beside it
+                        is misleading.
+                      </p>
+
+                      <div className="mt-3 rounded-xl bg-[#F7FAFF] p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">Customer survey response rate</p>
+                        <p className="mt-1 text-lg font-bold text-[#111827]">
+                          {formatReportRate(platformReport.satisfaction.customer.responseRate)}
+                        </p>
+                      </div>
+
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                        {[
+                          { label: "Overall", data: platformReport.satisfaction.customer.overall },
+                          { label: "Quality", data: platformReport.satisfaction.customer.quality },
+                          { label: "Timeliness", data: platformReport.satisfaction.customer.timeliness },
+                          { label: "Professionalism", data: platformReport.satisfaction.customer.professionalism },
+                          { label: "Communication", data: platformReport.satisfaction.customer.communication },
+                        ].map((row) => (
+                          <div key={row.label} className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">{row.label}</p>
+                            <p className="mt-1 text-xl font-bold text-[#111827]">
+                              {row.data.average === null ? "—" : `${row.data.average} / 5`}
+                            </p>
+                            <p className="mt-1 text-xs text-[#8794A8]">from {row.data.responses} response(s)</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                        {[
+                          { label: "Work as agreed", rate: platformReport.satisfaction.customer.scopeAsAgreed },
+                          { label: "Would recommend", rate: platformReport.satisfaction.customer.wouldRecommend },
+                          { label: "Would use SmartLink again", rate: platformReport.satisfaction.customer.wouldUseAgain },
+                        ].map((row) => (
+                          <div key={row.label} className="rounded-xl bg-[#F7FAFF] p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">{row.label}</p>
+                            <p className="mt-1 text-lg font-bold text-[#111827]">{formatReportRate(row.rate)}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <h3 className="mt-5 text-sm font-semibold">Providers ({platformReport.satisfaction.provider.responses} response(s))</h3>
+                      <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        {[
+                          { label: "Opportunity worthwhile", rate: platformReport.satisfaction.provider.opportunityWorthwhile },
+                          { label: "Would accept similar", rate: platformReport.satisfaction.provider.wouldAcceptSimilar },
+                          { label: "Request described accurately", rate: platformReport.satisfaction.provider.requestDescribedAccurately },
+                          { label: "Customer responsive", rate: platformReport.satisfaction.provider.customerResponsive },
+                        ].map((row) => (
+                          <div key={row.label} className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">{row.label}</p>
+                            <p className="mt-1 text-lg font-bold text-[#111827]">{formatReportRate(row.rate)}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* The platform's own figure against what providers say
+                          independently. A gap means one of them is wrong. */}
+                      <div className="mt-4 rounded-xl border border-[#FFE2B8] bg-[#FFFBF4] p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-[#A3620A]">Conversion cross-check</p>
+                        <p className="mt-1 text-sm text-[#8A6520]">
+                          Providers say{" "}
+                          <strong>{formatReportRate(platformReport.satisfaction.conversionCrossCheck.providerReported)}</strong>{" "}
+                          of opportunities became work. SmartLink measures{" "}
+                          <strong>{formatReportRate(platformReport.satisfaction.conversionCrossCheck.platformMeasured)}</strong>{" "}
+                          from its own records. A gap between the two means one of them is wrong, and
+                          it is worth knowing which before either figure is quoted.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Group 3 */}
+                    <div className="rounded-2xl border border-[#E2EAF8] bg-white p-5">
+                      <h2 className="text-lg font-semibold">Support and complaints</h2>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">Disputed jobs</p>
+                          <p className="mt-1 text-xl font-bold text-[#111827]">{platformReport.support.disputedJobs}</p>
+                        </div>
+                        {[
+                          { label: "Suspicious lead reports", value: platformReport.support.suspiciousLeadReports.total },
+                          { label: "Awaiting review", value: platformReport.support.suspiciousLeadReports.awaitingReview },
+                          { label: "Actioned", value: platformReport.support.suspiciousLeadReports.actioned },
+                        ].map((row) => (
+                          <div key={row.label} className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">{row.label}</p>
+                            <p className="mt-1 text-xl font-bold text-[#111827]">{row.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Said plainly rather than shown as an empty section: a
+                          blank group reads as "none", which is a different
+                          claim from "not built yet". */}
+                      <p className="mt-3 rounded-xl bg-[#F7FAFF] px-3 py-2 text-xs text-[#5E6F8A]">
+                        {platformReport.support.ticketing.note}
+                      </p>
+                    </div>
+
+                    {/* Group 4 */}
+                    <div className="rounded-2xl border border-[#E2EAF8] bg-white p-5">
+                      <h2 className="text-lg font-semibold">Continual improvement</h2>
+                      <p className="mt-1 rounded-xl bg-[#F7FAFF] px-3 py-2 text-xs text-[#5E6F8A]">
+                        {platformReport.improvement.note}
+                      </p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">Disputed jobs</p>
+                          <p className="mt-1 text-xl font-bold text-[#111827]">{platformReport.improvement.candidateSignals.disputedJobs}</p>
+                        </div>
+                        <div className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">Unverifiable jobs</p>
+                          <p className="mt-1 text-xl font-bold text-[#111827]">{platformReport.improvement.candidateSignals.unverifiableJobs}</p>
+                        </div>
+                        <div className="rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[#8794A8]">Requests described accurately</p>
+                          <p className="mt-1 text-lg font-bold text-[#111827]">
+                            {formatReportRate(platformReport.improvement.candidateSignals.requestsDescribedInaccurately)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
               </section>
             ) : null}
 

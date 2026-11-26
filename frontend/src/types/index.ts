@@ -1234,3 +1234,145 @@ export interface ProviderSurveyInput {
   wouldAcceptSimilar?: boolean | null;
   suggestions?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Reporting (Priority 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * A rate that can be read honestly.
+ *
+ * percent is null when the denominator is zero — "no data" and "zero per cent"
+ * are different claims, and a dashboard that shows 0% for an empty platform is
+ * making the wrong one.
+ */
+export interface ReportRate {
+  numerator: number;
+  denominator: number;
+  percent: number | null;
+}
+
+export interface RatingAverage {
+  average: number | null;
+  responses: number;
+}
+
+export interface ProviderReport {
+  inquiries: {
+    received: number;
+    accepted: number;
+    declined: number;
+    awaiting: number;
+    acceptanceRate: ReportRate;
+  };
+  quotations: {
+    created: number;
+    sent: number;
+    approved: number;
+    declined: number;
+    changesRequested: number;
+    approvalRate: ReportRate;
+    approvedValue: number;
+  };
+  // Counted separately and never summed: provider-reported is not the same
+  // claim as customer-confirmed.
+  jobs: {
+    total: number;
+    fromSmartLink: number;
+    ownCustomers: number;
+    awarded: number;
+    inProgress: number;
+    providerReportedComplete: number;
+    customerConfirmed: number;
+    disputed: number;
+    unverifiable: number;
+    cancelled: number;
+    onTime: ReportRate;
+  };
+  revenue: {
+    estimatedFromConfirmedJobs: number;
+    invoiced: number;
+    received: number;
+    outstanding: number;
+  };
+  profitability: {
+    estimatesRecorded: number;
+    estimatedProfit: number;
+    comparisons: number;
+    estimatedCost: number | null;
+    actualCost: number | null;
+    estimatedRevenue: number | null;
+    actualRevenue: number | null;
+  };
+}
+
+export interface AdminReport {
+  funnel: {
+    leads: number;
+    reachedAnExpert: ReportRate;
+    acceptedByAnExpert: ReportRate;
+    quotationsSent: number;
+    quotationsApproved: ReportRate;
+    jobsFromSmartLink: number;
+    jobsFromProviders: number;
+    leadsBecomingWork: ReportRate;
+  };
+  completion: {
+    total: number;
+    providerReportedComplete: number;
+    customerConfirmed: number;
+    disputed: number;
+    unverifiable: number;
+    cancelled: number;
+    stillOpen: number;
+    confirmationRate: ReportRate;
+    onTime: ReportRate;
+    currentlyOverdue: number;
+    valueOfConfirmedWork: number;
+  };
+  satisfaction: {
+    customer: {
+      responseRate: ReportRate;
+      overall: RatingAverage;
+      quality: RatingAverage;
+      timeliness: RatingAverage;
+      professionalism: RatingAverage;
+      communication: RatingAverage;
+      scopeAsAgreed: ReportRate;
+      wouldRecommend: ReportRate;
+      wouldUseAgain: ReportRate;
+      byOutcome: Record<string, number>;
+    };
+    provider: {
+      responses: number;
+      opportunityWorthwhile: ReportRate;
+      wouldAcceptSimilar: ReportRate;
+      requestDescribedAccurately: ReportRate;
+      customerResponsive: ReportRate;
+    };
+    conversionCrossCheck: {
+      providerReported: ReportRate;
+      platformMeasured: ReportRate;
+    };
+  };
+  support: {
+    disputedJobs: number;
+    suspiciousLeadReports: {
+      total: number;
+      awaitingReview: number;
+      actioned: number;
+      dismissed: number;
+      byReason: Record<string, number>;
+    };
+    ticketing: { available: boolean; note: string };
+  };
+  improvement: {
+    available: boolean;
+    note: string;
+    candidateSignals: {
+      disputedJobs: number;
+      unverifiableJobs: number;
+      requestsDescribedInaccurately: ReportRate;
+    };
+  };
+}

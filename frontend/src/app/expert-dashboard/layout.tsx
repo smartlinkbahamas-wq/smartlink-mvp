@@ -42,6 +42,7 @@ const navigation = [
   { name: "Customers", href: "/expert-dashboard/clients", icon: Users },
   { name: "Messages", href: "/expert-dashboard/messages", icon: MessageSquare },
   { name: "Reviews", href: "/expert-dashboard/reviews", icon: Star },
+  { name: "Your Business", href: "/expert-dashboard/reports", icon: BarChart3 },
   { name: "Analytics", href: "/expert-dashboard/analytics", icon: BarChart3 },
   { name: "Profile", href: "/expert-dashboard/profile", icon: User },
   { name: "Business Details", href: "/expert-dashboard/business", icon: Building2 },
