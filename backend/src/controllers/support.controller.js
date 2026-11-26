@@ -117,7 +117,7 @@ async function postMyMessage(req, res) {
 
 async function postRequestOriginal(req, res) {
   const expertId = await resolveExpertIdForUser(req.user?.userId);
-  const ticket = await support.requestOriginal(expertId, req.params.id);
+  const ticket = await support.requestOriginal(expertId, req.params.id, req);
   return res.json({
     success: true,
     message: "Request sent. An administrator will decide whether to share the original.",
@@ -157,6 +157,7 @@ async function patchTicket(req, res) {
     req.params.id,
     payload,
     req.adminUser?.userId || req.user?.userId || null,
+    req,
   );
   return res.json({ success: true, message: "Ticket updated.", data: ticket });
 }
@@ -181,7 +182,7 @@ async function postShareDecision(req, res) {
     share: payload.share,
     reason: payload.reason,
     adminUserId: req.adminUser?.userId || req.user?.userId || null,
-  });
+  }, req);
   return res.json({
     success: true,
     message: result.shared

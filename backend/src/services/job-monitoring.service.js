@@ -1,5 +1,6 @@
 const { AppError } = require("../utils/app-error");
 const { requireSupabase } = require("../utils/supabase-guard");
+const { recordAuditEvent, actorFrom } = require("./admin-audit.service");
 
 /**
  * Job monitoring: the schedule that chases a job to a confirmed outcome.
@@ -326,7 +327,7 @@ async function recordVerificationAttempt(jobId, { outcome, notes, recordedByUser
  * category only means anything if the process behind it was followed. An
  * Unverifiable job counts as neither confirmed nor disputed in reporting.
  */
-async function markUnverifiable(jobId, { reason, recordedByUserId } = {}) {
+async function markUnverifiable(jobId, { reason, recordedByUserId } = {}, req = null) {
   const supabase = requireSupabase();
   const settings = await getSettings();
   const attempts = await listVerificationAttempts(jobId);
@@ -379,6 +380,20 @@ async function markUnverifiable(jobId, { reason, recordedByUserId } = {}) {
     actorUserId: recordedByUserId || null,
     source: "unverifiable_after_calls",
     notes: `Completion could not be verified after ${attempts.length} telephone attempts.`,
+  });
+
+  // Unverifiable is counted as neither confirmed nor disputed, so this single
+  // decision removes a job from both headline figures. The audit row is what
+  // makes that defensible if the count is ever questioned.
+  await recordAuditEvent({
+    req,
+    actor: actorFrom(req, recordedByUserId),
+    actionType: "job_marked_unverifiable",
+    targetType: "job",
+    targetId: jobId,
+    previousValue: { status: AWAITING_CUSTOMER },
+    newValue: { status: "unverifiable", telephone_attempts: attempts.length },
+    notes: reason?.trim() || null,
   });
 
   return data;
@@ -583,7 +598,7 @@ async function listPendingDateRevisions() {
  * Rejecting leaves the date untouched, which is the point: the original
  * deadline stands and the timeliness figures continue against it.
  */
-async function reviewDateRevision(revisionId, { decision, notes, reviewedByUserId }) {
+async function reviewDateRevision(revisionId, { decision, notes, reviewedByUserId }, req = null) {
   if (!["approved", "rejected"].includes(decision)) {
     throw new AppError("Choose approve or reject.", 400, { code: "invalid_decision" });
   }
@@ -679,6 +694,28 @@ async function reviewDateRevision(revisionId, { decision, notes, reviewedByUserI
     actorType: "admin",
     actorUserId: reviewedByUserId || null,
     source: "date_revision_review",
+    notes: notes?.trim() || null,
+  });
+
+  // An administrator deciding a deadline is exactly what section 14 means by
+  // auditing job dates: the decision moves a date the provider is measured
+  // against, so who decided it has to survive.
+  await recordAuditEvent({
+    req,
+    actor: actorFrom(req, reviewedByUserId),
+    actionType: "job_date_revision_reviewed",
+    targetType: "job_date_revision",
+    targetId: revisionId,
+    previousValue: {
+      status: "pending",
+      previous_date: revision.previous_date || null,
+    },
+    newValue: {
+      status: decision,
+      requested_date: revision.requested_date,
+      job_id: revision.job_id,
+      applied: decision === "approved",
+    },
     notes: notes?.trim() || null,
   });
 

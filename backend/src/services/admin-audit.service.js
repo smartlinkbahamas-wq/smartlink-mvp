@@ -41,6 +41,44 @@ async function appendAdminAuditLog(params) {
   }
 }
 
+/**
+ * Records an audit entry for something that has ALREADY been committed.
+ *
+ * Never throws, unlike appendAdminAuditLog. The distinction matters: these
+ * call sites run after the job status, ticket or date has been written, so
+ * throwing would report a failure for work that actually succeeded, and the
+ * caller would have nothing useful to do about it anyway.
+ *
+ * Failing quietly is its own hazard -- a trail that silently stops recording
+ * is worse than no trail, because it is still trusted. So a failure is logged
+ * at error level with enough detail to identify what went unrecorded.
+ */
+async function recordAuditEvent(params) {
+  try {
+    await appendAdminAuditLog(params);
+  } catch (error) {
+    console.error(
+      `[audit] FAILED TO RECORD ${params.actionType} on ${params.targetType || "?"} ${params.targetId || "?"}: ${error.message}`,
+    );
+  }
+}
+
+/**
+ * Builds the actor from whichever auth shape the request carries.
+ *
+ * Administrators arrive as req.adminUser, providers and customers as req.user,
+ * and some public routes have neither. Reading them in one place keeps the
+ * call sites from each inventing their own precedence.
+ */
+function actorFrom(req, fallbackUserId = null) {
+  const admin = req?.adminUser;
+  const user = req?.user;
+  return {
+    userId: admin?.userId || user?.userId || fallbackUserId || null,
+    role: admin?.role || user?.role || (fallbackUserId ? "unknown" : null),
+  };
+}
+
 async function listAuditLogs(limit = 200) {
   const supabase = requireSupabase();
   const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
@@ -179,6 +217,8 @@ async function listExpertActivity(expertId, limit = 100) {
 
 module.exports = {
   appendAdminAuditLog,
+  recordAuditEvent,
+  actorFrom,
   listAuditLogs,
   listExpertActivity,
 };

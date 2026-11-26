@@ -1,5 +1,6 @@
 const { AppError } = require("../utils/app-error");
 const { requireSupabase } = require("../utils/supabase-guard");
+const { recordAuditEvent, actorFrom } = require("./admin-audit.service");
 const { round2 } = require("../utils/money");
 const { recordStageEvent } = require("./pipeline.service");
 const { getQuotation, allocateNumber, formatReference } = require("./quotation.service");
@@ -215,7 +216,7 @@ async function createFromQuotation(expertId, quotationId, payload = {}) {
  * completion date -- which would make it invisible to every timeliness figure
  * and to the overdue dashboard.
  */
-async function updateJobStatus(expertId, jobId, { status, actualCompletionDate, notes }) {
+async function updateJobStatus(expertId, jobId, { status, actualCompletionDate, notes }, req = null) {
   const supabase = requireSupabase();
   const job = await getJob(expertId, jobId);
 
@@ -273,6 +274,27 @@ async function updateJobStatus(expertId, jobId, { status, actualCompletionDate, 
     notes: notes?.trim() || null,
   });
 
+  // Section 14: a status change is an audited event. recordStageEvent already
+  // captures the funnel transition, but that table exists to compute
+  // reporting and is not append-only; the audit trail is the record that
+  // cannot be rewritten.
+  await recordAuditEvent({
+    req,
+    actor: actorFrom(req),
+    actionType: "job_status_change",
+    targetType: "job",
+    targetId: jobId,
+    previousValue: {
+      status: job.status,
+      actual_completion_date: job.actual_completion_date || null,
+    },
+    newValue: {
+      status: data.status,
+      actual_completion_date: data.actual_completion_date || null,
+    },
+    notes: notes?.trim() || null,
+  });
+
   // The provider saying it is done starts the customer's side: silence must
   // never count as confirmation, so the customer is asked immediately rather
   // than waiting for the next scheduled sweep.
@@ -302,7 +324,7 @@ async function updateJobStatus(expertId, jobId, { status, actualCompletionDate, 
  * specified, and it is also the only way a timeliness figure can be defended
  * if a provider disputes it.
  */
-async function reviseExpectedDate(expertId, jobId, { requestedDate, reason }) {
+async function reviseExpectedDate(expertId, jobId, { requestedDate, reason }, req = null) {
   const supabase = requireSupabase();
   const job = await getJob(expertId, jobId);
 
@@ -356,6 +378,25 @@ async function reviseExpectedDate(expertId, jobId, { requestedDate, reason }) {
     const { resetMonitoring } = require("./job-monitoring.service");
     await resetMonitoring(jobId);
   }
+
+  // Section 14 names job dates specifically. Recorded whether or not approval
+  // is required, because the request itself is the thing being audited -- a
+  // provider repeatedly moving a deadline is a pattern worth seeing even when
+  // every individual change was permitted.
+  await recordAuditEvent({
+    req,
+    actor: actorFrom(req, expertId),
+    actionType: needsApproval ? "job_date_revision_requested" : "job_date_revision_applied",
+    targetType: "job",
+    targetId: jobId,
+    previousValue: { expected_completion_date: job.expected_completion_date || null },
+    newValue: {
+      expected_completion_date: requestedDate,
+      requires_approval: needsApproval,
+      reason: reason?.trim() || null,
+    },
+    notes: reason?.trim() || null,
+  });
 
   return {
     job: updatedJob,

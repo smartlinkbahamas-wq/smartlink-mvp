@@ -290,7 +290,7 @@ async function postMarkUnverifiable(req, res) {
   const job = await monitoring.markUnverifiable(req.params.id, {
     reason: req.body?.reason,
     recordedByUserId: req.adminUser?.userId || req.user?.userId || null,
-  });
+  }, req);
   return res.json({
     success: true,
     message: "Marked unverifiable. It will be counted as neither confirmed nor disputed.",
@@ -340,7 +340,7 @@ async function patchDateRevision(req, res) {
     decision: payload.decision,
     notes: payload.notes,
     reviewedByUserId: req.adminUser?.userId || req.user?.userId || null,
-  });
+  }, req);
 
   return res.json({
     success: true,

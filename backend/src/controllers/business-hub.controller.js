@@ -351,14 +351,14 @@ async function createJobFromQuotation(req, res) {
 async function updateJobStatus(req, res) {
   const payload = parse(jobStatusSchema, req.body, "Check the job status.");
   const expertId = await resolveExpertIdForUser(req.user?.userId);
-  const job = await jobs.updateJobStatus(expertId, req.params.id, payload);
+  const job = await jobs.updateJobStatus(expertId, req.params.id, payload, req);
   return res.json({ success: true, message: "Job updated.", data: job });
 }
 
 async function reviseJobDate(req, res) {
   const payload = parse(jobDateRevisionSchema, req.body, "Give a reason for the date change.");
   const expertId = await resolveExpertIdForUser(req.user?.userId);
-  const result = await jobs.reviseExpectedDate(expertId, req.params.id, payload);
+  const result = await jobs.reviseExpectedDate(expertId, req.params.id, payload, req);
   return res.json({ success: true, message: result.message, data: result });
 }
 

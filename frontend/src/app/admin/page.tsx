@@ -225,6 +225,15 @@ function mapAuditAction(action: string) {
     admin_session_revoke_all: "Admin revoked all sessions",
     auth_login_success: "Login successful",
     auth_login_failure: "Login failed",
+    job_status_change: "Changed a job's status",
+    job_date_revision_requested: "Requested a new completion date",
+    job_date_revision_applied: "Changed the completion date",
+    job_date_revision_reviewed: "Decided a date change",
+    job_marked_unverifiable: "Marked a job unverifiable",
+    ticket_original_requested: "Asked to see the original complaint",
+    ticket_original_shared: "Shared the original complaint with the provider",
+    ticket_original_share_declined: "Declined to share the original complaint",
+    ticket_updated: "Updated a support ticket",
   };
   return map[action] || action.replaceAll("_", " ");
 }

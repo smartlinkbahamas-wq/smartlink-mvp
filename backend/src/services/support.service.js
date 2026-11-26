@@ -1,5 +1,6 @@
 const { AppError } = require("../utils/app-error");
 const { requireSupabase } = require("../utils/supabase-guard");
+const { recordAuditEvent, actorFrom } = require("./admin-audit.service");
 
 /**
  * Support tickets and complaint handling.
@@ -266,7 +267,7 @@ async function addMessage(ticketId, { authorType, authorUserId, authorName, body
  * the customer's text, because the whole point is that an administrator has
  * read it and decided what the provider needs to know.
  */
-async function setProviderSummary(ticketId, summary, adminUserId) {
+async function setProviderSummary(ticketId, summary, adminUserId, req = null) {
   const supabase = requireSupabase();
 
   const { data, error } = await supabase
@@ -296,7 +297,7 @@ async function setProviderSummary(ticketId, summary, adminUserId) {
 }
 
 /** The provider asks to see what was actually said. */
-async function requestOriginal(expertId, ticketId) {
+async function requestOriginal(expertId, ticketId, req = null) {
   const supabase = requireSupabase();
 
   const { data, error } = await supabase
@@ -319,6 +320,16 @@ async function requestOriginal(expertId, ticketId) {
     );
   }
 
+  await recordAuditEvent({
+    req,
+    actor: actorFrom(req, expertId),
+    actionType: "ticket_original_requested",
+    targetType: "support_ticket",
+    targetId: ticketId,
+    previousValue: { original_requested_at: null },
+    newValue: { original_requested_at: data.original_requested_at, expert_id: expertId },
+  });
+
   return data;
 }
 
@@ -329,7 +340,7 @@ async function requestOriginal(expertId, ticketId) {
  * internal note rather than silently doing nothing, so the decision exists
  * either way.
  */
-async function decideOriginalShare(ticketId, { share, reason, adminUserId }) {
+async function decideOriginalShare(ticketId, { share, reason, adminUserId }, req = null) {
   const supabase = requireSupabase();
 
   const { data: ticket, error: loadError } = await supabase
@@ -359,6 +370,18 @@ async function decideOriginalShare(ticketId, { share, reason, adminUserId }) {
         : "Declined to share the original complaint.",
       visibleTo: "internal",
     });
+
+    await recordAuditEvent({
+      req,
+      actor: actorFrom(req, adminUserId),
+      actionType: "ticket_original_share_declined",
+      targetType: "support_ticket",
+      targetId: ticketId,
+      previousValue: { original_shared_at: ticket.original_shared_at || null },
+      newValue: { shared: false },
+      notes: reason?.trim() || null,
+    });
+
     return { shared: false };
   }
 
@@ -382,17 +405,42 @@ async function decideOriginalShare(ticketId, { share, reason, adminUserId }) {
     visibleTo: "internal",
   });
 
+  // The single most sensitive act in the support flow. Until this moment the
+  // provider has seen only an administrator's summary; afterwards they can
+  // read what the customer actually wrote. Section 14 exists for decisions
+  // like this one, so it is audited with the administrator who made it.
+  await recordAuditEvent({
+    req,
+    actor: actorFrom(req, adminUserId),
+    actionType: "ticket_original_shared",
+    targetType: "support_ticket",
+    targetId: ticketId,
+    previousValue: { original_shared_at: null },
+    newValue: { original_shared_at: data.original_shared_at, shared: true },
+    notes: reason?.trim() || null,
+  });
+
   return { shared: true, sharedAt: data.original_shared_at };
 }
 
 // --- Status ----------------------------------------------------------------
 
-async function updateTicket(ticketId, { status, priority, assignedToUserId, resolution }, adminUserId) {
+async function updateTicket(ticketId, { status, priority, assignedToUserId, resolution }, adminUserId, req = null) {
   if (status && !TICKET_STATUSES.includes(status)) {
     throw new AppError("That is not a valid status.", 400, { code: "invalid_status" });
   }
 
   const supabase = requireSupabase();
+
+  // Read before writing, so the audit entry can say what actually changed.
+  // Without this the trail records only the end state, which cannot answer
+  // "who reassigned this ticket" -- the question it exists to answer.
+  const { data: before } = await supabase
+    .from("support_tickets")
+    .select("status, priority, assigned_to_user_id, resolution")
+    .eq("id", ticketId)
+    .maybeSingle();
+
   const update = { updated_at: new Date().toISOString() };
 
   if (status) update.status = status;
@@ -423,6 +471,30 @@ async function updateTicket(ticketId, { status, priority, assignedToUserId, reso
   if (!data) {
     throw new AppError("That ticket could not be found.", 404, { code: "ticket_not_found" });
   }
+
+  await recordAuditEvent({
+    req,
+    actor: actorFrom(req, adminUserId),
+    actionType: "ticket_updated",
+    targetType: "support_ticket",
+    targetId: ticketId,
+    previousValue: before
+      ? {
+          status: before.status,
+          priority: before.priority,
+          assigned_to_user_id: before.assigned_to_user_id,
+        }
+      : null,
+    newValue: {
+      status: data.status,
+      priority: data.priority,
+      assigned_to_user_id: data.assigned_to_user_id,
+    },
+    // The resolution text itself is not copied in: it can quote the
+    // customer's complaint, and the audit trail is read by more people than
+    // the ticket is.
+    notes: resolution !== undefined ? "Resolution text was changed." : null,
+  });
 
   if (status) {
     await addMessage(ticketId, {
