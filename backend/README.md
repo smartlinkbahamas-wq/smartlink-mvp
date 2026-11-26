@@ -101,6 +101,9 @@ it means your Supabase schema has not been applied yet.
    - `sql/install_support.sql` — support tickets and complaint handling.
      A complaint is invisible to the provider until an administrator writes a
      summary; the customer's original text is shared only by explicit decision.
+   - `sql/install_improvement.sql` — the continual improvement register.
+     Surfaces recurring patterns as candidates; a person decides what becomes
+     an action.
 
    **Check you are on the right project before running.** The SQL editor does
    not warn you, and running these against a different project creates tables

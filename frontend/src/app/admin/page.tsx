@@ -11,6 +11,7 @@ import {
   Briefcase,
   BarChart3,
   LifeBuoy,
+  Lightbulb,
   LayoutDashboard,
   LogOut,
   ScrollText,
@@ -83,6 +84,10 @@ import {
   postSupportMessage,
   setProviderSummary,
   decideShareOriginal,
+  getImprovementActions,
+  getImprovementCandidates,
+  createImprovementAction,
+  updateImprovementAction,
 } from "@/lib/admin-api";
 import { clearAdminSession, getAdminAccessToken, logoutCurrentSession } from "@/lib/admin-session";
 import { canAccessAdminArea } from "@/lib/role-guard";
@@ -117,6 +122,9 @@ import type {
   AdminReport,
   AdminTicket,
   TicketMessage,
+  ImprovementAction,
+  ImprovementCandidate,
+  ImprovementSource,
 } from "@/types";
 
 function can(me: AdminMe | null, permission: string) {
@@ -221,8 +229,25 @@ function mapAuditAction(action: string) {
   return map[action] || action.replaceAll("_", " ");
 }
 
-type TabKey = "overview" | "experts" | "leads" | "jobs" | "support" | "reports" | "team" | "categories" | "settings" | "activity";
+type TabKey = "overview" | "experts" | "leads" | "jobs" | "support" | "improvement" | "reports" | "team" | "categories" | "settings" | "activity";
 type ExpertsSubTabKey = "directory" | "applications" | "reviews" | "performance";
+const IMPROVEMENT_SOURCES: Array<{ value: ImprovementSource; label: string }> = [
+  { value: "complaint", label: "A customer complaint" },
+  { value: "dispute", label: "A disputed job" },
+  { value: "unverifiable_job", label: "Work that could not be verified" },
+  { value: "provider_feedback", label: "Provider feedback" },
+  { value: "customer_feedback", label: "Customer feedback" },
+  { value: "internal_review", label: "Our own review" },
+  { value: "other", label: "Other" },
+];
+
+const IMPROVEMENT_STATUS_LABELS: Record<string, string> = {
+  open: "Open",
+  in_progress: "In progress",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+
 const TICKET_STATUS_LABELS: Record<string, string> = {
   new: "New",
   under_review: "Under review",
@@ -346,6 +371,16 @@ export default function AdminPage() {
   const [ticketReply, setTicketReply] = useState("");
   const [ticketReplyVisibility, setTicketReplyVisibility] = useState<"internal" | "provider" | "customer" | "all">("internal");
   const [resolutionDraft, setResolutionDraft] = useState("");
+  const [improvementActions, setImprovementActions] = useState<ImprovementAction[]>([]);
+  const [improvementCandidates, setImprovementCandidates] = useState<ImprovementCandidate[]>([]);
+  const [improvementDraft, setImprovementDraft] = useState({
+    source: "internal_review" as ImprovementSource,
+    description: "",
+    category: "",
+    possibleRootCause: "",
+    targetDate: "",
+  });
+  const [actionDrafts, setActionDrafts] = useState<Record<string, { corrective: string; review: string }>>({});
   const [reviewNotesDraft, setReviewNotesDraft] = useState<Record<string, string>>({});
   const [matchOverrides, setMatchOverrides] = useState<AdminMatchOverrideRecord[]>([]);
   const [expertPerformance, setExpertPerformance] = useState<AdminExpertPerformanceRecord[]>([]);
@@ -439,6 +474,13 @@ export default function AdminPage() {
         helper: "Tickets and customer complaints.",
         icon: LifeBuoy,
         enabled: can(me, "lead.assign"),
+      },
+      {
+        key: "improvement" as const,
+        label: "Improvement",
+        helper: "Patterns worth acting on, and what was done.",
+        icon: Lightbulb,
+        enabled: can(me, "report.view"),
       },
       {
         key: "reports" as const,
@@ -574,6 +616,8 @@ export default function AdminPage() {
         getPendingDateRevisions(accessToken).then(setPendingDateRevisions).catch(() => undefined),
         getPlatformReport(accessToken).then(setPlatformReport).catch(() => undefined),
         getSupportTickets(accessToken).then(setSupportTickets).catch(() => undefined),
+        getImprovementActions(accessToken).then(setImprovementActions).catch(() => undefined),
+        getImprovementCandidates(accessToken).then(setImprovementCandidates).catch(() => undefined),
         getExpertPerformance(accessToken).then(setExpertPerformance).catch(() => undefined),
         searchLeads(accessToken, "").then(setLeadOptions).catch(() => undefined),
         getModerationReviews(accessToken).then(setModerationReviews).catch(() => undefined),
@@ -3429,6 +3473,278 @@ export default function AdminPage() {
                       problem with completed work.
                     </p>
                   ) : null}
+                </div>
+              </section>
+            ) : null}
+
+            {activeTab === "improvement" ? (
+              <section className="space-y-5">
+                {/* Candidates: grouped signals with recurrence counts.
+                    Deliberately not a list of incidents — one complaint is an
+                    incident, the same complaint four times is a pattern. */}
+                <div className="rounded-2xl border border-[#E2EAF8] bg-white p-5">
+                  <h2 className="text-lg font-semibold">Worth looking at</h2>
+                  <p className="mt-1 text-sm text-[#62728C]">
+                    Patterns the platform has noticed, with how often each has recurred. Nothing
+                    here becomes an action on its own — you decide what is worth acting on.
+                  </p>
+
+                  {improvementCandidates.length === 0 ? (
+                    <p className="mt-3 text-sm text-[#6A7C98]">
+                      Nothing has recurred yet. Complaints, disputes, unverifiable jobs and provider
+                      feedback all feed this list.
+                    </p>
+                  ) : (
+                    <div className="mt-3 space-y-2">
+                      {improvementCandidates.map((candidate) => (
+                        <article
+                          key={candidate.key}
+                          className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-[#E1E9F8] bg-[#FBFDFF] p-3"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-sm font-semibold">{candidate.label}</p>
+                              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                candidate.occurrences >= 3 ? "bg-[#FFF0F2] text-[#C8234C]" : "bg-[#FFF7E6] text-[#A3620A]"
+                              }`}>
+                                {candidate.occurrences} occurrence(s)
+                              </span>
+                              {candidate.alreadyTracked ? (
+                                <span className="rounded-full bg-[#F1F4F9] px-2.5 py-1 text-xs font-semibold text-[#5E6F8A]">
+                                  Already being tracked
+                                </span>
+                              ) : null}
+                            </div>
+                            {candidate.detail ? (
+                              <p className="mt-1 text-xs text-[#62728C]">{candidate.detail}</p>
+                            ) : null}
+                          </div>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-[#D6E1F4] bg-white px-3 py-1.5 text-sm font-semibold text-[#2E67E8]"
+                            onClick={() =>
+                              setImprovementDraft({
+                                source: candidate.source,
+                                description: candidate.detail || candidate.label,
+                                category: candidate.label,
+                                possibleRootCause: "",
+                                targetDate: "",
+                              })
+                            }
+                          >
+                            Open an entry
+                          </button>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Adding an entry. */}
+                <div className="rounded-2xl border border-[#E2EAF8] bg-white p-5">
+                  <h2 className="text-lg font-semibold">Add to the register</h2>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="imp-source" className="mb-1 block text-sm font-medium">Where it came from</label>
+                      <select
+                        id="imp-source"
+                        value={improvementDraft.source}
+                        onChange={(e) => setImprovementDraft({ ...improvementDraft, source: e.target.value as ImprovementSource })}
+                        className="h-11 w-full rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                      >
+                        {IMPROVEMENT_SOURCES.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="imp-category" className="mb-1 block text-sm font-medium">Category</label>
+                      <input
+                        id="imp-category"
+                        value={improvementDraft.category}
+                        onChange={(e) => setImprovementDraft({ ...improvementDraft, category: e.target.value })}
+                        placeholder="Matching quality, provider preparation, communication"
+                        className="h-11 w-full rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <label htmlFor="imp-desc" className="mb-1 block text-sm font-medium">What needs improving</label>
+                    <textarea
+                      id="imp-desc"
+                      rows={2}
+                      value={improvementDraft.description}
+                      onChange={(e) => setImprovementDraft({ ...improvementDraft, description: e.target.value })}
+                      className="w-full rounded-xl border border-[#D6E1F4] p-2 text-sm"
+                    />
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="imp-cause" className="mb-1 block text-sm font-medium">Possible root cause</label>
+                      <input
+                        id="imp-cause"
+                        value={improvementDraft.possibleRootCause}
+                        onChange={(e) => setImprovementDraft({ ...improvementDraft, possibleRootCause: e.target.value })}
+                        className="h-11 w-full rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="imp-target" className="mb-1 block text-sm font-medium">Target date</label>
+                      <input
+                        id="imp-target"
+                        type="date"
+                        value={improvementDraft.targetDate}
+                        onChange={(e) => setImprovementDraft({ ...improvementDraft, targetDate: e.target.value })}
+                        className="h-11 w-full rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={improvementDraft.description.trim().length < 10}
+                    className="mt-3 rounded-xl bg-[#2E67E8] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                    onClick={() =>
+                      runAction(async () => {
+                        await createImprovementAction(token, {
+                          source: improvementDraft.source,
+                          description: improvementDraft.description.trim(),
+                          category: improvementDraft.category.trim() || undefined,
+                          possibleRootCause: improvementDraft.possibleRootCause.trim() || undefined,
+                          targetDate: improvementDraft.targetDate || null,
+                        });
+                        setImprovementActions(await getImprovementActions(token));
+                        setImprovementCandidates(await getImprovementCandidates(token));
+                        setImprovementDraft({ source: "internal_review", description: "", category: "", possibleRootCause: "", targetDate: "" });
+                      }, "Added to the register.")
+                    }
+                  >
+                    Add entry
+                  </button>
+                </div>
+
+                {/* The register. */}
+                <div className="rounded-2xl border border-[#E2EAF8] bg-white p-5">
+                  <h2 className="text-lg font-semibold">The register</h2>
+                  <div className="mt-3 space-y-3">
+                    {improvementActions.map((action) => {
+                      const draft = actionDrafts[action.id] || { corrective: action.corrective_action || "", review: action.effectiveness_review || "" };
+
+                      return (
+                        <article key={action.id} className="rounded-xl border border-[#E1E9F8] bg-white p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-semibold">{action.reference}</p>
+                                <span className="rounded-full bg-[#EEF3FF] px-2.5 py-1 text-xs font-semibold text-[#2759C9]">
+                                  {IMPROVEMENT_STATUS_LABELS[action.status]}
+                                </span>
+                                {action.is_overdue ? (
+                                  <span className="rounded-full bg-[#FFF0F2] px-2.5 py-1 text-xs font-semibold text-[#C8234C]">
+                                    Past its target date
+                                  </span>
+                                ) : null}
+                                {/* The commonest way a register stops meaning
+                                    anything: actions done and never reviewed. */}
+                                {action.awaiting_effectiveness_review ? (
+                                  <span className="rounded-full bg-[#FFF7E6] px-2.5 py-1 text-xs font-semibold text-[#A3620A]">
+                                    Needs an effectiveness review
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="mt-1 text-sm text-[#111827]">{action.description}</p>
+                              <p className="mt-1 text-xs text-[#62728C]">
+                                Identified {formatDateOnly(action.identified_on)}
+                                {action.category ? ` · ${action.category}` : ""}
+                                {action.target_date ? ` · target ${formatDateOnly(action.target_date)}` : ""}
+                                {action.possible_root_cause ? ` · possible cause: ${action.possible_root_cause}` : ""}
+                              </p>
+                              {action.effectiveness_review ? (
+                                <p className="mt-2 rounded-lg bg-[#F7FAFF] px-3 py-2 text-xs text-[#4A5A75]">
+                                  <span className="font-semibold">
+                                    {action.was_effective === true ? "Worked:" : action.was_effective === false ? "Did not work:" : "Review:"}
+                                  </span>{" "}
+                                  {action.effectiveness_review}
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          {action.status !== "completed" && action.status !== "cancelled" ? (
+                            <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-[#E6EDF9] pt-3">
+                              <input
+                                value={draft.corrective}
+                                onChange={(e) =>
+                                  setActionDrafts((cur) => ({ ...cur, [action.id]: { ...draft, corrective: e.target.value } }))
+                                }
+                                placeholder="What was actually done? (required to complete)"
+                                className="h-10 min-w-[18rem] flex-1 rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                                aria-label="Corrective action"
+                              />
+                              <button
+                                type="button"
+                                disabled={!draft.corrective.trim()}
+                                className="h-10 rounded-xl bg-[#177245] px-4 text-sm font-semibold text-white disabled:opacity-50"
+                                onClick={() =>
+                                  runAction(async () => {
+                                    await updateImprovementAction(token, action.id, {
+                                      status: "completed",
+                                      correctiveAction: draft.corrective.trim(),
+                                    });
+                                    setImprovementActions(await getImprovementActions(token));
+                                  }, "Marked complete.")
+                                }
+                              >
+                                Mark complete
+                              </button>
+                            </div>
+                          ) : null}
+
+                          {action.awaiting_effectiveness_review ? (
+                            <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-[#E6EDF9] pt-3">
+                              <input
+                                value={draft.review}
+                                onChange={(e) =>
+                                  setActionDrafts((cur) => ({ ...cur, [action.id]: { ...draft, review: e.target.value } }))
+                                }
+                                placeholder="Did it work? What changed since?"
+                                className="h-10 min-w-[18rem] flex-1 rounded-xl border border-[#D6E1F4] px-3 text-sm"
+                                aria-label="Effectiveness review"
+                              />
+                              {[
+                                { label: "It worked", value: true, cls: "bg-[#177245]" },
+                                { label: "It did not", value: false, cls: "bg-[#C8234C]" },
+                              ].map((option) => (
+                                <button
+                                  key={option.label}
+                                  type="button"
+                                  disabled={!draft.review.trim()}
+                                  className={`h-10 rounded-xl px-4 text-sm font-semibold text-white disabled:opacity-50 ${option.cls}`}
+                                  onClick={() =>
+                                    runAction(async () => {
+                                      await updateImprovementAction(token, action.id, {
+                                        effectivenessReview: draft.review.trim(),
+                                        wasEffective: option.value,
+                                      });
+                                      setImprovementActions(await getImprovementActions(token));
+                                    }, "Review recorded.")
+                                  }
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </article>
+                      );
+                    })}
+
+                    {improvementActions.length === 0 ? (
+                      <p className="text-sm text-[#6A7C98]">
+                        Nothing in the register yet. Open an entry from a pattern above, or add one
+                        from your own review.
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               </section>
             ) : null}

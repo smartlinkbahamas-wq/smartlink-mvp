@@ -30,6 +30,9 @@ import type {
   AdminReport,
   AdminTicket,
   TicketMessage,
+  ImprovementAction,
+  ImprovementCandidate,
+  ImprovementSource,
 } from "@/types";
 
 const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000/api";
@@ -613,5 +616,55 @@ export async function decideShareOriginal(
     `/admin/support/${id}/share-original`,
     token,
     { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+// --- Continual improvement register -----------------------------------------
+
+export async function getImprovementActions(token: string, status?: string) {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  const response = await requestJson<{ success: boolean; data: { actions: ImprovementAction[] } }>(
+    `/admin/improvement${query}`,
+    token,
+  );
+  return response.data.actions || [];
+}
+
+export async function getImprovementCandidates(token: string) {
+  const response = await requestJson<{
+    success: boolean;
+    data: { candidates: ImprovementCandidate[] };
+  }>("/admin/improvement/candidates", token);
+  return response.data.candidates || [];
+}
+
+export async function createImprovementAction(
+  token: string,
+  payload: {
+    source: ImprovementSource;
+    description: string;
+    category?: string;
+    possibleRootCause?: string;
+    correctiveAction?: string;
+    assignedToName?: string;
+    targetDate?: string | null;
+  },
+) {
+  return requestJson<{ success: boolean; message: string; data: ImprovementAction }>(
+    "/admin/improvement",
+    token,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export async function updateImprovementAction(
+  token: string,
+  id: string,
+  payload: Record<string, unknown>,
+) {
+  return requestJson<{ success: boolean; message: string; data: ImprovementAction }>(
+    `/admin/improvement/${id}`,
+    token,
+    { method: "PATCH", body: JSON.stringify(payload) },
   );
 }

@@ -1439,3 +1439,57 @@ export interface AdminTicket extends ProviderTicket {
   assigned_to_user_id: string | null;
   closed_at: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Continual improvement register
+// ---------------------------------------------------------------------------
+
+export type ImprovementSource =
+  | "complaint"
+  | "dispute"
+  | "unverifiable_job"
+  | "provider_feedback"
+  | "customer_feedback"
+  | "internal_review"
+  | "other";
+
+export interface ImprovementAction {
+  id: string;
+  reference: string;
+  identified_on: string;
+  source: ImprovementSource;
+  source_ticket_id: string | null;
+  source_job_id: string | null;
+  description: string;
+  category: string | null;
+  possible_root_cause: string | null;
+  corrective_action: string | null;
+  assigned_to_name: string | null;
+  target_date: string | null;
+  status: "open" | "in_progress" | "completed" | "cancelled";
+  completed_on: string | null;
+  effectiveness_review: string | null;
+  effectiveness_reviewed_on: string | null;
+  was_effective: boolean | null;
+  created_at: string;
+  // Derived: a stored "overdue" flag would be wrong from the moment a target
+  // date passed until something recalculated it.
+  is_overdue: boolean;
+  awaiting_effectiveness_review: boolean;
+}
+
+/**
+ * A pattern worth considering, with how often it has recurred.
+ *
+ * Grouped rather than itemised: one complaint is an incident, the same
+ * complaint four times is a candidate. Nothing creates an entry from these —
+ * an administrator decides.
+ */
+export interface ImprovementCandidate {
+  key: string;
+  source: ImprovementSource;
+  label: string;
+  occurrences: number;
+  detail: string | null;
+  alreadyTracked: boolean;
+}

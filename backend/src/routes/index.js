@@ -10,6 +10,7 @@ const { jobConfirmationRouter, jobMonitoringAdminRouter } = require("./job-monit
 const { surveyRouter } = require("./survey.routes");
 const { reportingRouter } = require("./reporting.routes");
 const { supportRouter, supportAdminRouter } = require("./support.routes");
+const { improvementRouter } = require("./improvement.routes");
 const { leadRouter } = require("./lead.routes");
 const { matchesRouter } = require("./matches.routes");
 const { introductionRouter } = require("./introduction.routes");
@@ -34,6 +35,7 @@ apiRouter.use("/surveys", surveyRouter);
 apiRouter.use("/reports", reportingRouter);
 apiRouter.use("/support", supportRouter);
 apiRouter.use("/admin/support", supportAdminRouter);
+apiRouter.use("/admin/improvement", improvementRouter);
 apiRouter.use("/admin/job-monitoring", jobMonitoringAdminRouter);
 apiRouter.use("/documents", customerDocumentRouter);
 apiRouter.use("/leads", leadRouter);
