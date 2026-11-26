@@ -31,6 +31,12 @@ import {
   getServiceCategories,
   startCustomerEmailVerification,
   confirmCustomerEmailVerification,
+  requestAiSuggestion,
+} from "@/lib/backend-api";
+import type {
+  AiIntakeCatalogue,
+  AiIntakeOption,
+  AiIntakeSuggestion,
 } from "@/lib/backend-api";
 import { cn } from "@/lib/utils";
 import type {
@@ -1422,6 +1428,129 @@ function calculateAssessment(
   return { totalRiskPoints, maxRiskPoints, normalizedScore };
 }
 
+/**
+ * "Describe What You Need" -- the AI intake path.
+ *
+ * The frontend owns the vocabulary. The catalogue below is built from the same
+ * buildQuizPrompts() the questionnaire renders from, so an administrator who
+ * adds a category in Settings gets it in both paths at once. There is no copy
+ * of this list on the server.
+ */
+
+/** Which prompt holds the category question, which differs by audience. */
+export function getCategoryPromptId(audience: AudienceSegment) {
+  if (audience === "business-owner") return BUSINESS_PRIMARY_PROMPT_ID;
+  if (audience === "personal-help") return PERSONAL_PRIMARY_PROMPT_ID;
+  // "not-sure" asks situation_now first; the category lives in problem_need.
+  return "problem_need";
+}
+
+/** The audiences offered to the model. */
+function getAiAudiences() {
+  // "Not sure yet" is deliberately withheld. Someone who has just written a
+  // description of their problem is, by definition, not unsure what they need,
+  // and that route uses a different urgency vocabulary.
+  return AUDIENCE_SEGMENTS.filter((segment) => segment.id !== "not-sure");
+}
+
+export function buildAiCatalogue(dbCategories: ServiceCategory[]): AiIntakeCatalogue {
+  const audiences = getAiAudiences();
+
+  const categories: AiIntakeOption[] = [];
+  const seen = new Set<string>();
+
+  for (const segment of audiences) {
+    const prompts = buildQuizPrompts(undefined, segment.id, dbCategories);
+    const categoryPrompt = prompts.find((prompt) => prompt.id === getCategoryPromptId(segment.id));
+    for (const option of categoryPrompt?.options ?? []) {
+      if (seen.has(option.id)) continue;
+      seen.add(option.id);
+      // The audience is carried in the label so the model picks a coherent
+      // pair. An id only valid for one audience is rejected on the way back.
+      categories.push({ id: option.id, label: `${option.text} (${segment.label.toLowerCase()})` });
+    }
+  }
+
+  const toOptions = (options: QuizOption[]) => options.map((option) => ({ id: option.id, label: option.text }));
+
+  return {
+    audiences: audiences.map((segment) => ({ id: segment.id, label: segment.label })),
+    categories,
+    urgency: toOptions(URGENCY_OPTIONS),
+    budget: toOptions(BUDGET_OPTIONS),
+    location: toOptions(LOCATION_OPTIONS),
+  };
+}
+
+interface AppliedAiField {
+  key: string;
+  question: string;
+  answer: string;
+}
+
+/**
+ * Re-checks every id the model returned against the options this browser is
+ * actually rendering.
+ *
+ * Mandatory rather than defensive. getSelectedOption() returns undefined for an
+ * unknown id and contributes zero risk points, so an unvalidated id produces an
+ * enquiry that looks answered, scores nothing, and silently omits itself from
+ * the responses array -- a failure nobody would see until the matching results
+ * came back wrong.
+ *
+ * A scored answer is validated against the live prompt for the chosen audience.
+ * urgency, budget and location have no prompt on the business and personal
+ * routes, but are still read from the global option sets at lines 1656-1660 and
+ * flow into the lead form, so those are validated against the set that reads
+ * them.
+ */
+export function validateAiSuggestion(
+  suggestion: AiIntakeSuggestion,
+  dbCategories: ServiceCategory[],
+): { audience: AudienceSegment; answers: Record<string, string>; applied: AppliedAiField[] } | null {
+  const audience = AUDIENCE_SEGMENTS.find((segment) => segment.id === suggestion.audience)?.id;
+  if (!audience) return null;
+
+  const answers: Record<string, string> = {};
+  const applied: AppliedAiField[] = [];
+
+  // Category first: it decides which follow-up prompts exist.
+  const categoryPromptId = getCategoryPromptId(audience);
+  const categoryPrompt = buildQuizPrompts(undefined, audience, dbCategories)
+    .find((prompt) => prompt.id === categoryPromptId);
+  const categoryOption = categoryPrompt?.options.find((option) => option.id === suggestion.category);
+
+  if (categoryOption) {
+    answers[categoryPromptId] = categoryOption.id;
+    applied.push({ key: categoryPromptId, question: categoryPrompt!.text, answer: categoryOption.text });
+  }
+
+  // Prompts as they will be once the category is set, so urgency on the
+  // "not-sure" route is checked against GUIDED_URGENCY_OPTIONS and not the
+  // global set.
+  const prompts = buildQuizPrompts(answers[categoryPromptId], audience, dbCategories);
+
+  const simpleFields: { key: "urgency" | "budget" | "location"; fallback: QuizOption[]; question: string }[] = [
+    { key: "urgency", fallback: URGENCY_OPTIONS, question: "How urgent is this for you?" },
+    { key: "budget", fallback: BUDGET_OPTIONS, question: "What budget range are you comfortable with?" },
+    { key: "location", fallback: LOCATION_OPTIONS, question: "Where are you located?" },
+  ];
+
+  for (const field of simpleFields) {
+    const value = suggestion[field.key];
+    if (!value) continue;
+    const livePrompt = prompts.find((prompt) => prompt.id === field.key);
+    const options = livePrompt?.options ?? field.fallback;
+    const option = options.find((candidate) => candidate.id === value);
+    if (!option) continue;
+    answers[field.key] = option.id;
+    applied.push({ key: field.key, question: livePrompt?.text ?? field.question, answer: option.text });
+  }
+
+  if (!applied.length) return null;
+  return { audience, answers, applied };
+}
+
 export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
   const router = useRouter();
   const reducedMotion = useReducedMotion();
@@ -1431,11 +1560,11 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
   const selectedAudience = AUDIENCE_SEGMENTS.some((segment) => segment.id === initialAudience)
     ? (initialAudience as AudienceSegment)
     : undefined;
-  const currentAudience = selectedAudience ?? "business-owner";
-  const initialAnswers = deriveInitialAnswers(initialSituation, currentAudience);
-  const initialRoutingId = currentAudience === "business-owner"
+  const resolvedInitialAudience = selectedAudience ?? "business-owner";
+  const initialAnswers = deriveInitialAnswers(initialSituation, resolvedInitialAudience);
+  const initialRoutingId = resolvedInitialAudience === "business-owner"
     ? initialAnswers[BUSINESS_PRIMARY_PROMPT_ID]
-    : currentAudience === "personal-help"
+    : resolvedInitialAudience === "personal-help"
       ? initialAnswers[PERSONAL_PRIMARY_PROMPT_ID]
       : initialAnswers.problem_need;
   const [dbCategories, setDbCategories] = useState<ServiceCategory[]>([]);
@@ -1454,10 +1583,23 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
     };
   }, []);
 
-  const initialPrompts = buildQuizPrompts(initialRoutingId, currentAudience);
+  const initialPrompts = buildQuizPrompts(initialRoutingId, resolvedInitialAudience);
 
+  // State, not a constant derived from the prop: the AI intake path chooses the
+  // audience, and the whole prompt tree is rebuilt from it.
+  const [currentAudience, setCurrentAudience] = useState<AudienceSegment>(resolvedInitialAudience);
   const [answers, setAnswers] = useState<Record<string, string>>(() => initialAnswers);
   const [currentIndex, setCurrentIndex] = useState(() => getFirstUnansweredIndex(initialPrompts, initialAnswers));
+
+  // --- "Describe What You Need" ---------------------------------------------
+  const [aiDescription, setAiDescription] = useState("");
+  const [aiState, setAiState] = useState<"idle" | "thinking" | "confirm" | "unavailable">("idle");
+  const [aiProposal, setAiProposal] = useState<{
+    audience: AudienceSegment;
+    answers: Record<string, string>;
+    applied: AppliedAiField[];
+    confidence: number | null;
+  } | null>(null);
   const [flowStep, setFlowStep] = useState<FlowStep>("quiz");
   const [isLocationSuggestionsOpen, setIsLocationSuggestionsOpen] = useState(false);
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
@@ -1784,6 +1926,60 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
     setCurrentIndex((previous) => Math.min(previous + 1, prompts.length));
   };
 
+  // --- "Describe What You Need" ---------------------------------------------
+
+  const handleAiDescribe = async () => {
+    const description = aiDescription.trim();
+    if (description.length < 10 || aiState === "thinking") return;
+
+    setAiState("thinking");
+    const result = await requestAiSuggestion(description, buildAiCatalogue(dbCategories));
+
+    if (!result.available) {
+      // Every failure lands in the same place: the questions, with the typed
+      // text still on screen. The customer is never told a reason code.
+      setAiState("unavailable");
+      return;
+    }
+
+    const validated = validateAiSuggestion(result.suggestion, dbCategories);
+    if (!validated) {
+      setAiState("unavailable");
+      return;
+    }
+
+    setAiProposal({ ...validated, confidence: result.suggestion.confidence });
+    setAiState("confirm");
+  };
+
+  const applyAiProposal = () => {
+    if (!aiProposal) return;
+
+    setCurrentAudience(aiProposal.audience);
+    // REPLACED, never merged. Answers belonging to the previous audience's
+    // prompt tree would survive a merge as orphaned keys that still score.
+    setAnswers(aiProposal.answers);
+
+    const nextPrompts = buildQuizPrompts(
+      aiProposal.answers[getCategoryPromptId(aiProposal.audience)],
+      aiProposal.audience,
+      dbCategories,
+    );
+    // Recomputed against the NEW prompt tree: a prefilled answer makes
+    // getFirstUnansweredIndex skip that question, which is the point, but the
+    // index has to be derived from the tree the customer is about to see.
+    setCurrentIndex(getFirstUnansweredIndex(nextPrompts, aiProposal.answers));
+
+    setAiProposal(null);
+    setAiState("idle");
+    setFlowStep("quiz");
+  };
+
+  const dismissAiProposal = () => {
+    setAiProposal(null);
+    setAiState("idle");
+  };
+
   const handlePreviousQuestion = () => {
     if (flowStep !== "quiz") return;
     setCurrentIndex((previous) => Math.max(previous - 1, 0));
@@ -1984,6 +2180,11 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
       rankingWeightBoost: match.expert.rankingWeightBoost,
     }));
 
+    // Carried whether or not the AI could read it, so the provider sees the
+    // request in the customer's own words even when the suggestion failed.
+    const typedDescription = aiDescription.trim();
+    if (typedDescription) payload.customerDescription = typedDescription;
+
     saveAssessmentSubmission(payload);
     
     try {
@@ -2032,6 +2233,106 @@ export function QuizFlow({ initialSituation, initialAudience }: QuizFlowProps) {
                 </div>
                 <Progress value={progressValue} className="mt-3 h-2 rounded-full bg-[#E5EDFB]" />
               </div>
+
+              {flowStep === "quiz" && currentIndex === 0 ? (
+                <div className="mt-8 rounded-[26px] border border-[#D9E3F3] bg-[linear-gradient(180deg,#F8FBFF_0%,#FFFFFF_100%)] p-6">
+                  {aiState === "confirm" && aiProposal ? (
+                    <div>
+                      <Badge className="bg-[#EEF3FF] text-[#356AF6]">Here&apos;s what we understood</Badge>
+                      <p className="mt-4 text-sm leading-6 text-[#5D6B85]">
+                        Check these before we continue. You can change any answer afterwards.
+                      </p>
+
+                      {/* Every field that will be written is listed. A prefilled
+                          answer makes the questionnaire skip that question, so
+                          anything hidden here would never be seen again. */}
+                      <dl className="mt-4 space-y-3">
+                        <div className="rounded-2xl border border-[#D9E3F3] bg-white px-4 py-3">
+                          <dt className="text-xs font-medium uppercase tracking-wide text-[#8A97AE]">Who this is for</dt>
+                          <dd className="mt-1 text-sm font-medium text-[#111827]">
+                            {AUDIENCE_SEGMENTS.find((segment) => segment.id === aiProposal.audience)?.label}
+                          </dd>
+                        </div>
+                        {aiProposal.applied.map((field) => (
+                          <div key={field.key} className="rounded-2xl border border-[#D9E3F3] bg-white px-4 py-3">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-[#8A97AE]">{field.question}</dt>
+                            <dd className="mt-1 text-sm font-medium text-[#111827]">{field.answer}</dd>
+                          </div>
+                        ))}
+                      </dl>
+
+                      <p className="mt-4 text-sm text-[#5D6B85]">
+                        We&apos;ll ask you the rest. Anything we didn&apos;t fill in is simply a question you&apos;ll answer next.
+                      </p>
+
+                      <div className="mt-5 flex flex-wrap items-center gap-3">
+                        <Button type="button" onClick={applyAiProposal} className="rounded-full bg-[#356AF6] px-6 text-white hover:bg-[#2b57cc]">
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                          That&apos;s right, continue
+                        </Button>
+                        <Button type="button" variant="outline" onClick={dismissAiProposal} className="rounded-full border-[#D9E3F3] px-6 text-[#5D6B85]">
+                          No, I&apos;ll answer the questions
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <Badge className="bg-[#EEF3FF] text-[#356AF6]">Describe what you need</Badge>
+                        <span className="text-xs text-[#8A97AE]">Optional</span>
+                      </div>
+                      <p className="mt-3 text-sm leading-6 text-[#5D6B85]">
+                        Prefer to write it in your own words? Tell us what you need and we&apos;ll fill in what we can.
+                        You&apos;ll confirm everything before we continue.
+                      </p>
+
+                      <textarea
+                        value={aiDescription}
+                        onChange={(event) => {
+                          setAiDescription(event.target.value);
+                          if (aiState === "unavailable") setAiState("idle");
+                        }}
+                        rows={3}
+                        maxLength={1500}
+                        placeholder="For example: I run a small shop in Nassau and I need an electrician this week to fix the wiring in my storeroom."
+                        className="mt-4 w-full resize-none rounded-2xl border border-[#D9E3F3] bg-white px-4 py-3 text-sm leading-6 text-[#111827] outline-none transition focus:border-[#356AF6]"
+                      />
+
+                      {aiState === "unavailable" ? (
+                        <p className="mt-3 text-sm text-[#5D6B85]">
+                          We couldn&apos;t read that automatically — the questions below work just as well, and what you wrote is kept.
+                        </p>
+                      ) : null}
+
+                      <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <Button
+                          type="button"
+                          onClick={handleAiDescribe}
+                          disabled={aiDescription.trim().length < 10 || aiState === "thinking"}
+                          className="rounded-full bg-[#356AF6] px-6 text-white hover:bg-[#2b57cc] disabled:opacity-50"
+                        >
+                          {aiState === "thinking" ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Reading what you wrote
+                            </>
+                          ) : (
+                            "Use this to get started"
+                          )}
+                        </Button>
+                        <span className="text-xs text-[#8A97AE]">or just answer the questions below</span>
+                      </div>
+
+                      {/* Disclosure. Customers type legal, debt and medical
+                          circumstances into a box like this one. */}
+                      <p className="mt-4 text-xs leading-5 text-[#8A97AE]">
+                        What you write here is sent to an AI service to suggest answers, and is shared with the
+                        providers we match you with. Please leave out anything you would rather not share.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : null}
 
               {flowStep === "cyberIntro" ? (
                 <motion.div key="cyber-intro" initial={{ opacity: 0, y: reducedMotion ? 0 : 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reducedMotion ? 0 : -14 }} transition={{ duration: 0.2 }} className="mt-8 rounded-[26px] border border-[#D9E3F3] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-7">

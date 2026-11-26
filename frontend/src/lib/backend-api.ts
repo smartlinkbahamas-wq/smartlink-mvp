@@ -152,6 +152,7 @@ export async function createLeadInBackend(submission: AssessmentSubmission) {
         needsGuidedExperienceSignal: Boolean(submission.diagnosticProfile?.needsGuidedExperienceSignal),
       },
       responses: submission.responses,
+      customerDescription: submission.customerDescription || null,
     },
     source: "web",
   });
@@ -514,4 +515,63 @@ export async function getPublicServiceMenu(expertId: string) {
   if (!response.ok) throw new Error("Could not load that service menu.");
   const parsed = (await response.json()) as { success: boolean; data: { items: ServiceMenuItem[] } };
   return parsed.data.items || [];
+}
+
+// --- "Describe What You Need" (AI intake) -----------------------------------
+
+export interface AiIntakeOption {
+  id: string;
+  label: string;
+}
+
+export interface AiIntakeCatalogue {
+  audiences: AiIntakeOption[];
+  categories: AiIntakeOption[];
+  urgency: AiIntakeOption[];
+  budget: AiIntakeOption[];
+  location: AiIntakeOption[];
+}
+
+export interface AiIntakeSuggestion {
+  audience: string | null;
+  category: string | null;
+  urgency: string | null;
+  budget: string | null;
+  location: string | null;
+  confidence: number | null;
+}
+
+export type AiIntakeResult =
+  | { available: true; suggestion: AiIntakeSuggestion; dropped: string[] }
+  | { available: false; reason: string };
+
+/**
+ * Asks the backend to read a free-text description.
+ *
+ * NEVER THROWS. Every failure -- network, server, malformed body -- resolves to
+ * { available: false }, because the caller's response to a failure is always
+ * the same: show the questionnaire. A rejected promise would turn a recoverable
+ * situation into a dead end, and a dead end here loses the enquiry.
+ */
+export async function requestAiSuggestion(
+  description: string,
+  catalogue: AiIntakeCatalogue,
+): Promise<AiIntakeResult> {
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/ai/suggest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description, catalogue }),
+    });
+
+    if (!response.ok) {
+      return { available: false, reason: response.status === 429 ? "rate_limited" : "request_failed" };
+    }
+
+    const parsed = (await response.json()) as { success?: boolean; data?: AiIntakeResult };
+    if (!parsed?.data) return { available: false, reason: "empty_response" };
+    return parsed.data;
+  } catch {
+    return { available: false, reason: "network_error" };
+  }
 }

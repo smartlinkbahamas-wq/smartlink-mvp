@@ -225,6 +225,12 @@ export interface AssessmentSubmission {
   leadTracking: LeadTrackingRecord[];
   rankingControlSnapshot: RankingControlSnapshot[];
   diagnosticProfile?: DiagnosticProfile;
+  /**
+   * What the customer typed into "Describe what you need", in their own
+   * words. Carried through whether or not the AI could read it, so the
+   * provider sees the request as the customer wrote it.
+   */
+  customerDescription?: string;
   feedbackLoop?: FeedbackLoopData;
   introductionRequests?: IntroductionRequest[];
   expertPerformanceTracking?: ExpertPerformanceRecord[];

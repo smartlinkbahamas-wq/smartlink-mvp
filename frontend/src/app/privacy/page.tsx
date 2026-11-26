@@ -12,6 +12,10 @@ const sections = [
     body: "Your information is used to produce personalised assessment results, rank matched experts, and facilitate introduction requests. We do not sell your personal data to third parties.",
   },
   {
+    title: "Describe What You Need (AI Assistance)",
+    body: "If you choose to describe what you need in your own words instead of answering the questions, the text you write is sent to an external AI service (Google Gemini) so it can suggest answers for you. You always review and confirm those suggestions before anything is submitted, and the questionnaire remains available if you would rather not use this option. What you write is also shared with the service providers we match you with, so that they understand your request. Please leave out anything you would prefer not to share.",
+  },
+  {
     title: "Data Retention",
     body: "Assessment results are stored locally in your browser session. Any data submitted through the platform is retained only as long as necessary to fulfil the service you requested. You may request deletion at any time by contacting us.",
   },

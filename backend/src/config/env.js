@@ -47,6 +47,15 @@ const env = {
   // first entry is not guaranteed to be the public site.
   // The background task runner. Off by default in test so importing the app
   // never starts a timer; on everywhere else.
+  // "Describe What You Need". Unset means the feature is simply unavailable
+  // and customers go straight to the questionnaire -- which is the fallback
+  // for every other failure too, so there is no separate path to maintain.
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
+  // Free tier allowance divided across instances, so N servers cannot together
+  // exceed what one allowance covers.
+  AI_DAILY_CALL_LIMIT: toNumber(process.env.AI_DAILY_CALL_LIMIT, 1200),
+  AI_INSTANCE_COUNT: toNumber(process.env.AI_INSTANCE_COUNT, 1),
+  AI_RATE_LIMIT_MAX: toNumber(process.env.AI_RATE_LIMIT_MAX, 10),
   SCHEDULER_ENABLED: String(process.env.SCHEDULER_ENABLED || "true").toLowerCase() !== "false",
   SCHEDULER_TICK_SECONDS: toNumber(process.env.SCHEDULER_TICK_SECONDS, 60),
   FRONTEND_BASE_URL: process.env.FRONTEND_BASE_URL || "",
