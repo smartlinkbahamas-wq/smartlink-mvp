@@ -1,4 +1,5 @@
 const { requireSupabase } = require("../utils/supabase-guard");
+const { requireLinkedExpertId } = require("../utils/expert-identity");
 
 async function getDashboardOverview(userId) {
   const supabase = requireSupabase();
@@ -162,13 +163,14 @@ async function getDashboardOverview(userId) {
 async function updateExpertProfile(userId, updates) {
   const supabase = requireSupabase();
 
-  const { data: link } = await supabase
-    .from("expert_user_links")
-    .select("expert_id")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  const expertId = link?.expert_id || userId;
+  // Resolve through the shared helper rather than falling back to the raw
+  // userId. A provider who has signed up but not yet submitted an
+  // application has no experts row, and the old fallback aimed the update
+  // at an expert_id that does not exist: it matched zero rows, and .single()
+  // surfaced PostgREST's "Cannot coerce the result to a single JSON object"
+  // to the provider. This throws the same explained 403 the rest of the hub
+  // returns for an unlinked account.
+  const expertId = await requireLinkedExpertId(userId);
 
   // Fetch current expert record
   const { data: existingExpert } = await supabase
