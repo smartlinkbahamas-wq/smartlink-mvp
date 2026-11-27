@@ -135,6 +135,8 @@ function ExpertApplyContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const allowResubmit = searchParams.get("resubmit") === "1";
+  // Set when the dashboard redirected here because no provider profile exists yet.
+  const sentFromDashboard = searchParams.get("setup") === "1";
   const [draft, setDraft] = useState<ExpertApplicationDraft>(defaultDraft);
   const [specializationOptions, setSpecializationOptions] = useState<string[]>(FALLBACK_SPECIALIZATIONS);
 
@@ -438,6 +440,17 @@ function ExpertApplyContent() {
     <main className="sl-page min-h-screen bg-[#F7F9FD] text-[#111827]">
       <div className="mx-auto w-full max-w-5xl px-5 py-8">
         <InnerNav breadcrumb="Expert Application" />
+
+        {sentFromDashboard ? (
+          <div className="mt-5 rounded-2xl border border-[#BBD4FB] bg-[#F1F6FF] px-5 py-4">
+            <p className="text-sm font-semibold text-[#1B4FC8]">One step before your dashboard</p>
+            <p className="mt-1 text-sm leading-relaxed text-[#3D4F6B]">
+              Your account is ready. Completing this application creates your provider
+              profile, which your quotations, jobs and invoices are all attached to.
+              Your dashboard opens as soon as you submit it.
+            </p>
+          </div>
+        ) : null}
 
         {/* ── HERO ── */}
         <section className="mt-6 rounded-2xl border border-[#D9E3F3] bg-white px-7 py-6 shadow-sm">

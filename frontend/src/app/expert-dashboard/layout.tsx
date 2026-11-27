@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { clearAdminSession, logoutCurrentSession, getAdminAccessToken, getSessionMe } from "@/lib/admin-session";
 import { canUseExpertSection } from "@/lib/role-guard";
+import { getMyExpertApplicationStatus } from "@/lib/backend-api";
 
 const navigation = [
   { name: "Dashboard", href: "/expert-dashboard", icon: LayoutDashboard },
@@ -162,9 +163,25 @@ export default function ExpertDashboardLayout({ children }: { children: React.Re
         clearAdminSession();
         router.replace("/login?expired=true");
         return;
-      } finally {
-        setLoading(false);
       }
+
+      // Signing up as an expert creates the account but not the provider
+      // profile -- the application form does that. Without it every section
+      // here fails, so send them to finish the application rather than into
+      // a dashboard where nothing works.
+      try {
+        const statusView = await getMyExpertApplicationStatus(token);
+        if (!statusView?.expert) {
+          router.replace("/expert-apply?setup=1");
+          return;
+        }
+      } catch (err) {
+        // Deliberately fail open. A transient failure here must not lock a
+        // provider who does have a profile out of their own dashboard.
+        console.warn("Could not confirm the provider profile; continuing.", err);
+      }
+
+      setLoading(false);
     }
     checkAuth();
   }, [router]);
